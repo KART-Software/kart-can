@@ -1,0 +1,16 @@
+{
+  "name": "kart-can",
+  "version": "0.1.0",
+  "description": "Kart CAN message definitions generated from can.yaml (cantools). Provides kart.h / kart.c.",
+  "keywords": ["can", "dbc", "cantools", "kart"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KART-Software/kart-can.git"
+  },
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "srcDir": "generated",
+    "includeDir": "generated"
+  }
+}
