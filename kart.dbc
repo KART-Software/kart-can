@@ -1,0 +1,241 @@
+VERSION ""
+
+
+NS_ : 
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_DEF_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: data_logger drive_controller kart_machine_manager motec_ecu
+
+
+BO_ 1520 MoTeC_Engine1: 8 motec_ecu
+ SG_ oil_temp : 55|16@0+ (0.1,0) [0|0] "degC"  kart_machine_manager
+ SG_ water_temp : 39|16@0+ (0.1,0) [0|0] "degC"  kart_machine_manager
+ SG_ throttle : 23|16@0+ (0.1,0) [0|0] "%"  kart_machine_manager
+ SG_ rpm : 7|16@0+ (1,0) [0|0] "rpm"  kart_machine_manager
+
+BO_ 1521 MoTeC_Engine2: 8 motec_ecu
+ SG_ lambda_ : 55|16@0+ (0.001,0) [0|0] ""  kart_machine_manager
+ SG_ battery_voltage : 39|16@0+ (0.01,0) [0|0] "V"  kart_machine_manager
+ SG_ gear_voltage : 23|16@0+ (0.001,0) [0|0] "V"  kart_machine_manager
+ SG_ oil_press : 7|16@0+ (0.1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1522 MoTeC_Engine3: 8 motec_ecu
+ SG_ brake_press_rear : 55|16@0+ (0.1,0) [0|0] ""  kart_machine_manager
+ SG_ brake_press_front : 39|16@0+ (0.1,0) [0|0] ""  kart_machine_manager
+ SG_ fuel_press : 23|16@0+ (0.1,0) [0|0] ""  kart_machine_manager
+ SG_ manifold_pressure : 7|16@0+ (0.1,0) [0|0] "kPa"  kart_machine_manager
+
+BO_ 1523 MoTeC_Status: 8 motec_ecu
+ SG_ output_rpm : 55|16@0+ (1,0) [0|0] "rpm"  kart_machine_manager
+ SG_ input_rpm : 39|16@0+ (1,0) [0|0] "rpm"  kart_machine_manager
+ SG_ ist_shift_status : 23|16@0+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ fan_enabled : 7|16@0+ (1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1524 MoTeC_Temps2: 6 motec_ecu
+ SG_ coolant_temp : 39|16@0+ (0.1,0) [0|0] "degC"  kart_machine_manager
+ SG_ oil_temp3 : 23|16@0+ (0.1,0) [0|0] "degC"  kart_machine_manager
+ SG_ oil_temp2 : 7|16@0+ (0.1,0) [0|0] "degC"  kart_machine_manager
+
+BO_ 1536 DC_GyroXY: 8 drive_controller
+ SG_ gyro_y : 32|32@1+ (1,0) [0|0] "dps" Vector__XXX
+ SG_ gyro_x : 0|32@1+ (1,0) [0|0] "dps" Vector__XXX
+
+BO_ 1537 DC_GyroZGear: 5 drive_controller
+ SG_ gear : 32|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ gyro_z : 0|32@1+ (1,0) [0|0] "dps" Vector__XXX
+
+BO_ 1538 DC_AccelXY: 8 drive_controller
+ SG_ accel_y : 32|32@1+ (1,0) [0|0] "mg" Vector__XXX
+ SG_ accel_x : 0|32@1+ (1,0) [0|0] "mg" Vector__XXX
+
+BO_ 1539 DC_AccelZ: 4 drive_controller
+ SG_ accel_z : 0|32@1+ (1,0) [0|0] "mg" Vector__XXX
+
+BO_ 1792 DL_700: 8 data_logger
+ SG_ dl_gyro_x : 55|16@0- (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_accel_z : 39|16@0- (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_accel_y : 23|16@0- (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_accel_x : 7|16@0- (1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1793 DL_701: 8 data_logger
+ SG_ dl_adc_ch1 : 55|16@0+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_adc_ch0 : 39|16@0+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_gyro_z : 23|16@0- (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_gyro_y : 7|16@0- (1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1794 DL_702: 8 data_logger
+ SG_ dl_adc_ch5 : 55|16@0+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_adc_ch4 : 39|16@0+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_adc_ch3 : 23|16@0+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_adc_ch2 : 7|16@0+ (1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1795 DL_703: 8 data_logger
+ SG_ gps_itow : 32|32@1+ (1,0) [0|0] "ms"  kart_machine_manager
+ SG_ dl_adc_ch7 : 23|16@0+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ dl_adc_ch6 : 7|16@0+ (1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1796 DL_704: 8 data_logger
+ SG_ gps_valid : 56|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_sec : 48|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_min : 40|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_hour : 32|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_day : 24|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_month : 16|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_year : 0|16@1+ (1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1797 DL_705: 8 data_logger
+ SG_ gps_nano : 32|32@1- (1,0) [0|0] "ns"  kart_machine_manager
+ SG_ gps_t_acc : 0|32@1+ (1,0) [0|0] "ns"  kart_machine_manager
+
+BO_ 1798 DL_706: 8 data_logger
+ SG_ gps_lon : 32|32@1- (1e-07,0) [0|0] "deg"  kart_machine_manager
+ SG_ gps_num_sv : 24|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_flags2 : 16|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_flags : 8|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_fix_type : 0|8@1+ (1,0) [0|0] ""  kart_machine_manager
+
+BO_ 1799 DL_707: 8 data_logger
+ SG_ gps_height : 32|32@1- (1,0) [0|0] "mm"  kart_machine_manager
+ SG_ gps_lat : 0|32@1- (1e-07,0) [0|0] "deg"  kart_machine_manager
+
+BO_ 1800 DL_708: 8 data_logger
+ SG_ gps_h_acc : 32|32@1+ (1,0) [0|0] "mm"  kart_machine_manager
+ SG_ gps_h_msl : 0|32@1- (1,0) [0|0] "mm"  kart_machine_manager
+
+BO_ 1801 DL_709: 8 data_logger
+ SG_ gps_vel_n : 32|32@1- (1,0) [0|0] "mm/s"  kart_machine_manager
+ SG_ gps_v_acc : 0|32@1+ (1,0) [0|0] "mm"  kart_machine_manager
+
+BO_ 1802 DL_70A: 8 data_logger
+ SG_ gps_vel_d : 32|32@1- (1,0) [0|0] "mm/s"  kart_machine_manager
+ SG_ gps_vel_e : 0|32@1- (1,0) [0|0] "mm/s"  kart_machine_manager
+
+BO_ 1803 DL_70B: 8 data_logger
+ SG_ gps_head_mot : 32|32@1- (1e-05,0) [0|0] "deg"  kart_machine_manager
+ SG_ gps_g_speed : 0|32@1- (1,0) [0|0] "mm/s"  kart_machine_manager
+
+BO_ 1804 DL_70C: 8 data_logger
+ SG_ gps_head_acc : 32|32@1+ (1e-05,0) [0|0] "deg"  kart_machine_manager
+ SG_ gps_s_acc : 0|32@1+ (1,0) [0|0] "mm/s"  kart_machine_manager
+
+BO_ 1805 DL_70D: 8 data_logger
+ SG_ gps_flags3 : 16|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ gps_p_dop : 0|16@1+ (0.01,0) [0|0] ""  kart_machine_manager
+
+BO_ 1806 DL_70E: 8 data_logger
+ SG_ gps_mag_acc : 48|16@1+ (0.01,0) [0|0] "deg"  kart_machine_manager
+ SG_ gps_mag_dec : 32|16@1- (0.01,0) [0|0] "deg"  kart_machine_manager
+ SG_ gps_head_veh : 0|32@1- (1e-05,0) [0|0] "deg"  kart_machine_manager
+
+BO_ 1856 KartControl: 3 data_logger
+ SG_ auto_shift : 16|8@1+ (1,0) [0|0] ""  drive_controller
+ SG_ launch_active : 8|8@1+ (1,0) [0|0] ""  drive_controller
+ SG_ etc_mode : 0|8@1+ (1,0) [0|0] ""  drive_controller
+
+
+
+
+CM_ BU_ data_logger "センサ送信 (ESP32-S3)。BMI160 IMU + ADS8688 ADC + u-blox GNSS。加えて drive-controller への制御信号 (0x740〜) を送信。";
+CM_ BU_ drive_controller "駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU+ギアを送信。";
+CM_ BU_ motec_ecu "[外部ノード] MoTeC エンジンECU（外部）。エンジンデータを送信、kart-machine-manager が受信。";
+CM_ SG_ 1521 lambda_ "表示側は未デコード";
+CM_ SG_ 1522 manifold_pressure "表示側は未デコード";
+CM_ SG_ 1523 output_rpm "表示側未デコード";
+CM_ SG_ 1523 input_rpm "表示側未デコード";
+CM_ SG_ 1523 ist_shift_status "(istUp,istDown): 0=なし,1=DOWN,2=UP,3=両方。表示側未デコード";
+CM_ SG_ 1523 fan_enabled "表示側は下位バイト(data[1])をbool化";
+CM_ BO_ 1524 "表示デコードなし・UDP転送のみ";
+CM_ SG_ 1537 gear "0xFF=不明, 0=N, 1-6=段";
+CM_ BO_ 1538 "単位要確認: ヘッダはm/s²だが実データはmg（can-spec.md 注意点4）";
+CM_ BO_ 1792 "data-logger 生バッファ byte 0-7（再構成の一部）";
+CM_ SG_ 1792 dl_gyro_x "±250dps ≒131.2 LSB/(°/s)";
+CM_ SG_ 1792 dl_accel_x "±2g ≒16384 LSB/g";
+CM_ BO_ 1793 "data-logger 生バッファ byte 8-15（再構成の一部）";
+CM_ SG_ 1793 dl_gyro_z "⚠firmwareバグ: 現状gyro_xを重複送信";
+CM_ SG_ 1793 dl_gyro_y "⚠firmwareバグ: 現状gyro_xを重複送信 (bmi160.cpp:70-73)";
+CM_ BO_ 1794 "data-logger 生バッファ byte 16-23（再構成の一部）";
+CM_ BO_ 1795 "data-logger 生バッファ byte 24-31（再構成の一部）";
+CM_ BO_ 1796 "data-logger 生バッファ byte 32-39（再構成の一部）";
+CM_ SG_ 1796 gps_valid "bitfield: b0 validDate,b1 validTime,b2 fullyResolved,b3 validMag";
+CM_ BO_ 1797 "data-logger 生バッファ byte 40-47（再構成の一部）";
+CM_ BO_ 1798 "data-logger 生バッファ byte 48-55（再構成の一部）";
+CM_ SG_ 1798 gps_num_sv "使用衛星数";
+CM_ SG_ 1798 gps_flags "b0 gnssFixOK 他";
+CM_ SG_ 1798 gps_fix_type "0=nofix,2=2D,3=3D,4=GNSS+DR,5=time";
+CM_ BO_ 1799 "data-logger 生バッファ byte 56-63（再構成の一部）";
+CM_ BO_ 1800 "data-logger 生バッファ byte 64-71（再構成の一部）";
+CM_ BO_ 1801 "data-logger 生バッファ byte 72-79（再構成の一部）";
+CM_ BO_ 1802 "data-logger 生バッファ byte 80-87（再構成の一部）";
+CM_ BO_ 1803 "data-logger 生バッファ byte 88-95（再構成の一部）";
+CM_ BO_ 1804 "data-logger 生バッファ byte 96-103（再構成の一部）";
+CM_ BO_ 1805 "data-logger 生バッファ byte 104-111（再構成の一部）";
+CM_ SG_ 1805 gps_flags3 "b0 invalidLlh";
+CM_ BO_ 1806 "data-logger 生バッファ byte 112-119（再構成の一部）";
+CM_ BO_ 1856 "制御信号フレーム (制御ID帯 0x740〜の先頭)。byte0=ETCモード, byte1=launch, byte2=auto-shift。200ms途絶でフェイルセーフ。";
+CM_ SG_ 1856 auto_shift "0x01=オート(ON)、その他=マニュアル(OFF)。200ms途絶→manual";
+CM_ SG_ 1856 launch_active "0x01=active、その他=inactive。200ms途絶→inactive。通常ビルドではFSM無効";
+CM_ SG_ 1856 etc_mode "0=未指定(無視・現モード維持)。200ms途絶→NORMAL(MOTOR_OFFはラッチ)";
+BA_DEF_ BO_  "GenMsgCycleTime" INT 0 65535;
+BA_DEF_DEF_  "GenMsgCycleTime" 0;
+BA_ "GenMsgCycleTime" BO_ 1536 16;
+BA_ "GenMsgCycleTime" BO_ 1537 16;
+BA_ "GenMsgCycleTime" BO_ 1538 16;
+BA_ "GenMsgCycleTime" BO_ 1539 16;
+BA_ "GenMsgCycleTime" BO_ 1792 33;
+BA_ "GenMsgCycleTime" BO_ 1793 33;
+BA_ "GenMsgCycleTime" BO_ 1794 33;
+BA_ "GenMsgCycleTime" BO_ 1795 33;
+BA_ "GenMsgCycleTime" BO_ 1796 33;
+BA_ "GenMsgCycleTime" BO_ 1797 33;
+BA_ "GenMsgCycleTime" BO_ 1798 33;
+BA_ "GenMsgCycleTime" BO_ 1799 33;
+BA_ "GenMsgCycleTime" BO_ 1800 33;
+BA_ "GenMsgCycleTime" BO_ 1801 33;
+BA_ "GenMsgCycleTime" BO_ 1802 33;
+BA_ "GenMsgCycleTime" BO_ 1803 33;
+BA_ "GenMsgCycleTime" BO_ 1804 33;
+BA_ "GenMsgCycleTime" BO_ 1805 33;
+BA_ "GenMsgCycleTime" BO_ 1806 33;
+BA_ "GenMsgCycleTime" BO_ 1856 100;
+VAL_ 1523 ist_shift_status 0 "NONE" 1 "DOWN" 2 "UP" 3 "BOTH" ;
+VAL_ 1523 fan_enabled 0 "OFF" 1 "ON" ;
+VAL_ 1856 auto_shift 0 "MANUAL" 1 "AUTO" ;
+VAL_ 1856 launch_active 0 "INACTIVE" 1 "ACTIVE" ;
+VAL_ 1856 etc_mode 1 "CALIB" 2 "NORMAL" 3 "RESTRICTED" 4 "MOTOR_OFF" ;
+SIG_VALTYPE_ 1536 gyro_x : 1;
+SIG_VALTYPE_ 1536 gyro_y : 1;
+SIG_VALTYPE_ 1537 gyro_z : 1;
+SIG_VALTYPE_ 1538 accel_x : 1;
+SIG_VALTYPE_ 1538 accel_y : 1;
+SIG_VALTYPE_ 1539 accel_z : 1;
+
+

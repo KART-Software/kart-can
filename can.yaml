@@ -1,0 +1,227 @@
+# ============================================================================
+#  カート CAN 定義 — 単一ソース（人間が読み書きするのはこのファイルだけ）
+#
+#  ここから gen.py が生成する:
+#    - kart.dbc  … 汎用CANツール用 (candump, cantools, Vector, PCAN, python-can)
+#    - kart.h/.c … firmware用Cコード (Teensy/ESP32 の手書き #define を置換)
+#    - kart.py   … python-can 用 decode/encode (cantools)
+#
+#  記法:
+#    byte   : そのフレーム先頭からのバイトオフセット（data_logger は再構成後120Bの絶対オフセット）
+#    size   : ビット長（8の倍数＝バイト境界のみ。gen.py が DBC のビット番号へ変換）
+#    endian : big(Motorola) / little(Intel)。省略時はメッセージ既定→little
+#    type   : uint(既定) / int(符号付き) / float(IEEE754 f32)
+#    scale  : 物理値 = raw * scale + offset（省略時 scale=1, offset=0）
+#    choices: 値→名称の対応表（enum）
+#    cycle_ms: 送信周期。rx: 受信ノード（ドキュメント用）
+#
+#  出典・背景は can-spec.md、要確認事項は can-spec.md の「不整合・注意点」を参照。
+# ============================================================================
+
+bus:
+  name: kart
+  baudrate: 1000000        # 実バス=1Mbps（data-logger/drive-controller で一致）。
+                           # ※ Arduinoモックのみ500kbps（can-spec.md 注意点3）。
+
+nodes:
+
+  # --------------------------------------------------------------------------
+  # 駆動系ECU (Teensy 4.1): IMU姿勢 + ギアを 16ms(~62.5Hz) 周期で送信
+  # float32・リトルエンディアン（memcpy直書き、スケーリングなし）
+  # --------------------------------------------------------------------------
+  drive_controller:
+    description: 駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU+ギアを送信。
+    defaults: {endian: little}
+    messages:
+      - name: DC_GyroXY
+        id: 0x600
+        dlc: 8
+        cycle_ms: 16
+        signals:
+          - {name: gyro_x, byte: 0, size: 32, type: float, unit: dps}
+          - {name: gyro_y, byte: 4, size: 32, type: float, unit: dps}
+
+      - name: DC_GyroZGear
+        id: 0x601
+        dlc: 5
+        cycle_ms: 16
+        signals:
+          - {name: gyro_z, byte: 0, size: 32, type: float, unit: dps}
+          - {name: gear,   byte: 4, size: 8,  type: uint, comment: "0xFF=不明, 0=N, 1-6=段"}
+
+      - name: DC_AccelXY
+        id: 0x602
+        dlc: 8
+        cycle_ms: 16
+        comment: "単位要確認: ヘッダはm/s²だが実データはmg（can-spec.md 注意点4）"
+        signals:
+          - {name: accel_x, byte: 0, size: 32, type: float, unit: mg}
+          - {name: accel_y, byte: 4, size: 32, type: float, unit: mg}
+
+      - name: DC_AccelZ
+        id: 0x603
+        dlc: 4
+        cycle_ms: 16
+        signals:
+          - {name: accel_z, byte: 0, size: 32, type: float, unit: mg}
+
+  # --------------------------------------------------------------------------
+  # MoTeC エンジンECU（本リポジトリ外）: kart-machine-manager が受信・表示
+  # uint16・ビッグエンディアン・スケーリング付き
+  # --------------------------------------------------------------------------
+  motec_ecu:
+    external: true
+    description: MoTeC エンジンECU（外部）。エンジンデータを送信、kart-machine-manager が受信。
+    defaults: {endian: big}
+    messages:
+      - name: MoTeC_Engine1
+        id: 0x5F0
+        dlc: 8
+        rx: [kart_machine_manager]
+        signals:
+          - {name: rpm,        byte: 0, size: 16, unit: rpm}
+          - {name: throttle,   byte: 2, size: 16, scale: 0.1, unit: "%"}
+          - {name: water_temp, byte: 4, size: 16, scale: 0.1, unit: degC}
+          - {name: oil_temp,   byte: 6, size: 16, scale: 0.1, unit: degC}
+
+      - name: MoTeC_Engine2
+        id: 0x5F1
+        dlc: 8
+        rx: [kart_machine_manager]
+        signals:
+          - {name: oil_press,       byte: 0, size: 16, scale: 0.1}
+          - {name: gear_voltage,    byte: 2, size: 16, scale: 0.001, unit: V}
+          - {name: battery_voltage, byte: 4, size: 16, scale: 0.01,  unit: V}
+          - {name: lambda_,         byte: 6, size: 16, scale: 0.001, comment: "表示側は未デコード"}
+
+      - name: MoTeC_Engine3
+        id: 0x5F2
+        dlc: 8
+        rx: [kart_machine_manager]
+        signals:
+          - {name: manifold_pressure, byte: 0, size: 16, scale: 0.1, unit: kPa, comment: "表示側は未デコード"}
+          - {name: fuel_press,        byte: 2, size: 16, scale: 0.1}
+          - {name: brake_press_front, byte: 4, size: 16, scale: 0.1}
+          - {name: brake_press_rear,  byte: 6, size: 16, scale: 0.1}
+
+      - name: MoTeC_Status
+        id: 0x5F3
+        dlc: 8
+        rx: [kart_machine_manager]
+        signals:
+          - name: fan_enabled
+            byte: 0
+            size: 16
+            comment: "表示側は下位バイト(data[1])をbool化"
+            choices: {0: "OFF", 1: "ON"}   # クォート必須（YAML 1.1 は OFF/ON を真偽値に変換）
+          - name: ist_shift_status
+            byte: 2
+            size: 16
+            comment: "(istUp,istDown): 0=なし,1=DOWN,2=UP,3=両方。表示側未デコード"
+            choices: {0: NONE, 1: DOWN, 2: UP, 3: BOTH}
+          - {name: input_rpm,  byte: 4, size: 16, unit: rpm, comment: "表示側未デコード"}
+          - {name: output_rpm, byte: 6, size: 16, unit: rpm, comment: "表示側未デコード"}
+
+      - name: MoTeC_Temps2
+        id: 0x5F4
+        dlc: 6
+        rx: [kart_machine_manager]
+        comment: "表示デコードなし・UDP転送のみ"
+        signals:
+          - {name: oil_temp2,     byte: 0, size: 16, scale: 0.1, unit: degC}
+          - {name: oil_temp3,     byte: 2, size: 16, scale: 0.1, unit: degC}
+          - {name: coolant_temp,  byte: 4, size: 16, scale: 0.1, unit: degC}
+
+  # --------------------------------------------------------------------------
+  # data-logger (ESP32-S3): センサ送信専用
+  # 120Bバッファを 8B×15フレーム (0x700-0x70E) に分割して ~33ms 毎にバースト送信。
+  # 下の signals は「再構成後120Bバッファの絶対バイトオフセット」。
+  # gen.py が byte//8 で各フレーム(0x700+i)へ自動分割する（全フィールドが境界内に収まる）。
+  # ⚠ エンディアン混在: BMI160/ADS8688=big, GPS(UBX)=little。
+  # kart-machine-manager は受信するが生のままUDP転送（デコードなし）。
+  # --------------------------------------------------------------------------
+  data_logger:
+    description: センサ送信 (ESP32-S3)。BMI160 IMU + ADS8688 ADC + u-blox GNSS。加えて drive-controller への制御信号 (0x740〜) を送信。
+    messages:
+      # 制御信号 (data-logger → drive-controller)。制御用 CAN ID は 0x740 から始まり、
+      # 制御信号が増えれば 0x741, 0x742... を割り当てる。0x740 は mode/launch/auto-shift を運ぶ。
+      # 200ms 途絶で各値フェイルセーフ。
+      - name: KartControl
+        id: 0x740
+        dlc: 3
+        cycle_ms: 100
+        rx: [drive_controller]
+        comment: "制御信号フレーム (制御ID帯 0x740〜の先頭)。byte0=ETCモード, byte1=launch, byte2=auto-shift。200ms途絶でフェイルセーフ。"
+        signals:
+          - name: etc_mode
+            byte: 0
+            size: 8
+            comment: "0=未指定(無視・現モード維持)。200ms途絶→NORMAL(MOTOR_OFFはラッチ)"
+            choices: {1: CALIB, 2: NORMAL, 3: RESTRICTED, 4: MOTOR_OFF}
+          - name: launch_active
+            byte: 1
+            size: 8
+            comment: "0x01=active、その他=inactive。200ms途絶→inactive。通常ビルドではFSM無効"
+            choices: {0: INACTIVE, 1: ACTIVE}
+          - name: auto_shift
+            byte: 2
+            size: 8
+            comment: "0x01=オート(ON)、その他=マニュアル(OFF)。200ms途絶→manual"
+            choices: {0: MANUAL, 1: AUTO}
+    reassembled:
+      base_id: 0x700
+      frame_bytes: 8
+      dlc: 8
+      cycle_ms: 33
+      rx: [kart_machine_manager]
+      signals:
+        # --- BMI160 IMU  buffer 0-11  (int16, big-endian, 生カウント) ---
+        - {name: dl_accel_x, byte: 0,  size: 16, type: int, endian: big, comment: "±2g ≒16384 LSB/g"}
+        - {name: dl_accel_y, byte: 2,  size: 16, type: int, endian: big}
+        - {name: dl_accel_z, byte: 4,  size: 16, type: int, endian: big}
+        - {name: dl_gyro_x,  byte: 6,  size: 16, type: int, endian: big, comment: "±250dps ≒131.2 LSB/(°/s)"}
+        - {name: dl_gyro_y,  byte: 8,  size: 16, type: int, endian: big, comment: "⚠firmwareバグ: 現状gyro_xを重複送信 (bmi160.cpp:70-73)"}
+        - {name: dl_gyro_z,  byte: 10, size: 16, type: int, endian: big, comment: "⚠firmwareバグ: 現状gyro_xを重複送信"}
+        # --- ADS8688 ADC  buffer 12-27  (uint16, big-endian, 生カウント, 0-5.12V, V=raw*7.8125e-5) ---
+        - {name: dl_adc_ch0, byte: 12, size: 16, endian: big}
+        - {name: dl_adc_ch1, byte: 14, size: 16, endian: big}
+        - {name: dl_adc_ch2, byte: 16, size: 16, endian: big}
+        - {name: dl_adc_ch3, byte: 18, size: 16, endian: big}
+        - {name: dl_adc_ch4, byte: 20, size: 16, endian: big}
+        - {name: dl_adc_ch5, byte: 22, size: 16, endian: big}
+        - {name: dl_adc_ch6, byte: 24, size: 16, endian: big}
+        - {name: dl_adc_ch7, byte: 26, size: 16, endian: big}
+        # --- u-blox UBX-NAV-PVT  buffer 28-119  (little-endian, buffer byte = 28 + UBXoffset) ---
+        - {name: gps_itow,     byte: 28,  size: 32, endian: little, unit: ms}
+        - {name: gps_year,     byte: 32,  size: 16, endian: little}
+        - {name: gps_month,    byte: 34,  size: 8}
+        - {name: gps_day,      byte: 35,  size: 8}
+        - {name: gps_hour,     byte: 36,  size: 8}
+        - {name: gps_min,      byte: 37,  size: 8}
+        - {name: gps_sec,      byte: 38,  size: 8}
+        - {name: gps_valid,    byte: 39,  size: 8, comment: "bitfield: b0 validDate,b1 validTime,b2 fullyResolved,b3 validMag"}
+        - {name: gps_t_acc,    byte: 40,  size: 32, endian: little, unit: ns}
+        - {name: gps_nano,     byte: 44,  size: 32, type: int, endian: little, unit: ns}
+        - {name: gps_fix_type, byte: 48,  size: 8, comment: "0=nofix,2=2D,3=3D,4=GNSS+DR,5=time"}
+        - {name: gps_flags,    byte: 49,  size: 8, comment: "b0 gnssFixOK 他"}
+        - {name: gps_flags2,   byte: 50,  size: 8}
+        - {name: gps_num_sv,   byte: 51,  size: 8, comment: "使用衛星数"}
+        - {name: gps_lon,      byte: 52,  size: 32, type: int, endian: little, scale: 1.0e-7, unit: deg}
+        - {name: gps_lat,      byte: 56,  size: 32, type: int, endian: little, scale: 1.0e-7, unit: deg}
+        - {name: gps_height,   byte: 60,  size: 32, type: int, endian: little, unit: mm}
+        - {name: gps_h_msl,    byte: 64,  size: 32, type: int, endian: little, unit: mm}
+        - {name: gps_h_acc,    byte: 68,  size: 32, endian: little, unit: mm}
+        - {name: gps_v_acc,    byte: 72,  size: 32, endian: little, unit: mm}
+        - {name: gps_vel_n,    byte: 76,  size: 32, type: int, endian: little, unit: mm/s}
+        - {name: gps_vel_e,    byte: 80,  size: 32, type: int, endian: little, unit: mm/s}
+        - {name: gps_vel_d,    byte: 84,  size: 32, type: int, endian: little, unit: mm/s}
+        - {name: gps_g_speed,  byte: 88,  size: 32, type: int, endian: little, unit: mm/s}
+        - {name: gps_head_mot, byte: 92,  size: 32, type: int, endian: little, scale: 1.0e-5, unit: deg}
+        - {name: gps_s_acc,    byte: 96,  size: 32, endian: little, unit: mm/s}
+        - {name: gps_head_acc, byte: 100, size: 32, endian: little, scale: 1.0e-5, unit: deg}
+        - {name: gps_p_dop,    byte: 104, size: 16, endian: little, scale: 0.01}
+        - {name: gps_flags3,   byte: 106, size: 8, comment: "b0 invalidLlh"}
+        # buffer 107-111 = reserved（省略）
+        - {name: gps_head_veh, byte: 112, size: 32, type: int, endian: little, scale: 1.0e-5, unit: deg}
+        - {name: gps_mag_dec,  byte: 116, size: 16, type: int, endian: little, scale: 0.01, unit: deg}
+        - {name: gps_mag_acc,  byte: 118, size: 16, endian: little, scale: 0.01, unit: deg}
