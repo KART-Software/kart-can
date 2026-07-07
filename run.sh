@@ -13,16 +13,16 @@ if [ ! -x "$PY" ]; then
   uv pip install --python "$PY" cantools pyyaml
 fi
 
-echo "== 1) can.yaml -> kart.dbc（+ 自己テスト）=="
-"$PY" gen.py
+echo "== 1) can.yaml -> generated/kart.dbc（+ 自己テスト）=="
+"$PY" tools/gen.py
 
 echo
-echo "== 2) kart.dbc -> kart.h / kart.c（firmware用Cコード）=="
-"$CANTOOLS" generate_c_source kart.dbc
+echo "== 2) generated/kart.dbc -> generated/kart.h / kart.c（firmware用Cコード）=="
+"$CANTOOLS" generate_c_source generated/kart.dbc --output-directory generated
 
 echo
-echo "== 3) 確認: kart.dbc をロードし直してメッセージ一覧 =="
-"$CANTOOLS" list kart.dbc
+echo "== 3) 確認: generated/kart.dbc をロードし直してメッセージ一覧 =="
+"$CANTOOLS" list generated/kart.dbc
 
 echo
-echo "完了: kart.dbc / kart.h / kart.c"
+echo "完了: generated/kart.dbc / kart.h / kart.c"

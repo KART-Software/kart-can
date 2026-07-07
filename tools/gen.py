@@ -9,8 +9,8 @@
   3. kart.dbc を出力
   4. ラウンドトリップ自己テスト（エンコード→バイト列→デコード）でレイアウト検証
 
-C ヘッダ生成:  cantools generate_c_source kart.dbc   （run.sh 参照）
-python-can:    db = cantools.database.load_file("kart.dbc"); db.decode_message(id, data)
+C ヘッダ生成:  cantools generate_c_source generated/kart.dbc   （run.sh 参照）
+python-can:    db = cantools.database.load_file("generated/kart.dbc"); db.decode_message(id, data)
 """
 from __future__ import annotations
 import struct
@@ -21,9 +21,10 @@ import yaml
 from cantools.database.can import Database, Message, Node, Signal
 from cantools.database.conversion import BaseConversion
 
-HERE = Path(__file__).parent
-YAML_PATH = HERE / "can.yaml"
-DBC_PATH = HERE / "kart.dbc"
+ROOT = Path(__file__).resolve().parent.parent  # tools/ の 1 つ上 = リポジトリルート
+YAML_PATH = ROOT / "can.yaml"
+GENERATED_DIR = ROOT / "generated"
+DBC_PATH = GENERATED_DIR / "kart.dbc"
 
 
 def byte_order(endian: str) -> str:
@@ -226,6 +227,7 @@ def main() -> int:
     spec = yaml.safe_load(YAML_PATH.read_text())
     db = build_database(spec)
 
+    GENERATED_DIR.mkdir(exist_ok=True)
     DBC_PATH.write_text(db.as_dbc_string())
     n_sig = sum(len(m.signals) for m in db.messages)
     print(f"生成: {DBC_PATH.name}  ({len(db.nodes)} nodes, {len(db.messages)} messages, {n_sig} signals)")

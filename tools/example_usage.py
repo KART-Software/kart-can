@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """kart.dbc を python-can / cantools で使う最小例。
-   実行:  .venv/bin/python example_usage.py
+   実行:  .venv/bin/python tools/example_usage.py
 """
+from pathlib import Path
+
 import cantools
 
-db = cantools.database.load_file("kart.dbc")
+DBC = Path(__file__).resolve().parent.parent / "generated" / "kart.dbc"
+db = cantools.database.load_file(str(DBC))
 
 # --- デコード例: MoTeC Engine1 (0x5F0) ---
 # rpm=6000, throttle=42.0%, water=95.0, oil=110.0 のフレームを作ってデコード

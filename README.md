@@ -6,30 +6,34 @@
 DBC を手書きしないための構成: `can.yaml` だけを編集し、他は生成物。
 
 ```
-can.yaml ──(gen.py + cantools)──▶ kart.dbc ──(cantools)──▶ kart.h / kart.c
-   ▲ 人間が編集する唯一のソース         │ 汎用ツール用           firmware用Cコード
-                                       └──────────────▶ python-can で直接ロード
+can.yaml ──(tools/gen.py + cantools)──▶ generated/kart.dbc ──▶ generated/kart.h / kart.c
+   ▲ 人間が編集する唯一のソース              │ 汎用ツール用              firmware用Cコード
+                                            └──────────────▶ python-can で直接ロード
 ```
 
-## ファイル
+## 構成
 
-| ファイル | 役割 | 編集 |
-|---|---|---|
-| `can.yaml` | **CAN定義の単一ソース**（ノード別TX/RX・信号レイアウト） | ✏️ ここだけ手で編集 |
-| `gen.py` | `can.yaml` → `kart.dbc` 生成 + ラウンドトリップ自己テスト | 記法拡張時のみ |
-| `run.sh` | 全成果物を再生成（venv自動セットアップ込み） | — |
-| `example_usage.py` | python-can/cantools での decode/encode 例 | — |
-| `can-spec.md` | 人間向けの読み物仕様（背景・出典 `file:line`・**要確認事項**） | 手で更新 |
-| `kart.dbc` | 🤖生成: 汎用CANツール用（candump/Vector/PCAN/python-can） | 生成物・編集禁止 |
-| `kart.h` / `kart.c` | 🤖生成: firmware用C（`*_FRAME_ID`, `struct`, `_pack/_unpack`, `_decode`） | 生成物・編集禁止 |
+```
+kz-can/
+├── can.yaml               ← ✏️ 人間が編集する唯一のソース（ノード別TX/RX・信号レイアウト）
+├── run.sh                 ← can.yaml から全生成物を再生成（venv自動セットアップ込み）
+├── tools/
+│   ├── gen.py             ← can.yaml → generated/kart.dbc 生成 + ラウンドトリップ自己テスト
+│   └── example_usage.py   ← python-can/cantools での decode/encode 例
+├── generated/             ← 🤖 生成物（編集禁止・run.sh で再生成）
+│   ├── kart.dbc           ← 汎用CANツール用（candump/Vector/PCAN/python-can）
+│   ├── kart.h / kart.c    ← firmware用C（`*_FRAME_ID`, `struct`, `_pack/_unpack`, `_decode`）
+└── docs/
+    └── can-spec.md        ← 読み物仕様（背景・出典 `file:line`・**要確認事項**）
+```
 
 ## 使い方
 
 ```bash
-./run.sh                      # can.yaml から kart.dbc / kart.h / kart.c を再生成
-.venv/bin/python example_usage.py   # デコード例
-.venv/bin/cantools dump kart.dbc <id> <data>   # 単発デコード
-.venv/bin/cantools monitor kart.dbc            # 実バス監視（socketcan）
+./run.sh                             # can.yaml から generated/{kart.dbc,kart.h,kart.c} を再生成
+.venv/bin/python tools/example_usage.py        # デコード例
+.venv/bin/cantools dump generated/kart.dbc <id> <data>   # 単発デコード
+.venv/bin/cantools monitor generated/kart.dbc            # 実バス監視（socketcan）
 ```
 
 初回は `run.sh` が `uv venv` で `.venv` を作り `cantools`/`pyyaml` を入れる。
@@ -56,7 +60,7 @@ can.yaml ──(gen.py + cantools)──▶ kart.dbc ──(cantools)──▶ k
 
 ## firmware での利用（手書き #define の置換）
 
-`kart.h` に各メッセージの ID・構造体・pack/unpack・スケール変換が入る:
+`generated/kart.h` に各メッセージの ID・構造体・pack/unpack・スケール変換が入る:
 
 ```c
 #include "kart.h"
@@ -67,11 +71,11 @@ kart_dc_gyro_xy_pack(buf, &m, sizeof(buf));   // → CAN送信
 ```
 
 Teensy(dc-firmware)/ESP32(data-logger) の `constants.hpp` の手書き `CAN_ID_*` は
-`KART_*_FRAME_ID` に置き換え可能。ビルドに `kart.h`/`kart.c` を取り込む。
+`KART_*_FRAME_ID` に置き換え可能。ビルドに `generated/kart.h`/`kart.c` を取り込む。
 
 ## 対象ノード / IDマップ
 
-`can.yaml` に定義済み（詳細レイアウトは `can-spec.md`）:
+`can.yaml` に定義済み（詳細レイアウトは `docs/can-spec.md`）:
 
 | 送信ノード | ID | 概要 |
 |---|---|---|
@@ -81,4 +85,4 @@ Teensy(dc-firmware)/ESP32(data-logger) の `constants.hpp` の手書き `CAN_ID_
 | data_logger | 0x740〜 | 制御信号（制御ID帯の先頭。0x740 = mode/launch/auto-shift）→ drive-controller |
 
 > **要確認事項**（0x600系の受信者不在, 加速度の単位, BMI160ジャイロY/Zバグ 等）は
-> `can-spec.md` の「不整合・注意点」を参照。定義を正とする前に確認すること。
+> `docs/can-spec.md` の「不整合・注意点」を参照。定義を正とする前に確認すること。
