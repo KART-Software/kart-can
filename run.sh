@@ -17,12 +17,13 @@ echo "== 1) can.yaml -> generated/kart.dbc（+ 自己テスト）=="
 "$PY" tools/gen.py
 
 echo
-echo "== 2) generated/kart.dbc -> generated/kart.h / kart.c（firmware用Cコード）=="
-"$CANTOOLS" generate_c_source generated/kart.dbc --output-directory generated
+echo "== 2) generated/kart.dbc -> generated/kart_can.h / kart_can.c（firmware用Cコード）=="
+# --database-name で出力ファイル名とシンボル接頭辞を kart_can に (include <kart_can.h>)
+"$CANTOOLS" generate_c_source generated/kart.dbc --database-name kart_can --output-directory generated
 
 echo
 echo "== 3) 確認: generated/kart.dbc をロードし直してメッセージ一覧 =="
 "$CANTOOLS" list generated/kart.dbc
 
 echo
-echo "完了: generated/kart.dbc / kart.h / kart.c"
+echo "完了: generated/kart.dbc / kart_can.h / kart_can.c"

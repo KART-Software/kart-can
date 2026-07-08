@@ -6,7 +6,7 @@
 DBC を手書きしないための構成: `can.yaml` だけを編集し、他は生成物。
 
 ```
-can.yaml ──(tools/gen.py + cantools)──▶ generated/kart.dbc ──▶ generated/kart.h / kart.c
+can.yaml ──(tools/gen.py + cantools)──▶ generated/kart.dbc ──▶ generated/kart_can.h / kart_can.c
    ▲ 人間が編集する唯一のソース              │ 汎用ツール用              firmware用Cコード
                                             └──────────────▶ python-can で直接ロード
 ```
@@ -22,7 +22,7 @@ kz-can/
 │   └── example_usage.py   ← python-can/cantools での decode/encode 例
 ├── generated/             ← 🤖 生成物（編集禁止・run.sh で再生成）
 │   ├── kart.dbc           ← 汎用CANツール用（candump/Vector/PCAN/python-can）
-│   ├── kart.h / kart.c    ← firmware用C（`*_FRAME_ID`, `struct`, `_pack/_unpack`, `_decode`）
+│   ├── kart_can.h / .c    ← firmware用C（`KART_CAN_*_FRAME_ID`, `struct`, `_pack/_unpack`, `_decode`）
 └── docs/
     └── can-spec.md        ← 読み物仕様（背景・出典 `file:line`・**要確認事項**）
 ```
@@ -30,7 +30,7 @@ kz-can/
 ## 使い方
 
 ```bash
-./run.sh                             # can.yaml から generated/{kart.dbc,kart.h,kart.c} を再生成
+./run.sh                             # can.yaml から generated/{kart.dbc,kart_can.h,kart_can.c} を再生成
 .venv/bin/python tools/example_usage.py        # デコード例
 .venv/bin/cantools dump generated/kart.dbc <id> <data>   # 単発デコード
 .venv/bin/cantools monitor generated/kart.dbc            # 実バス監視（socketcan）
@@ -60,18 +60,18 @@ kz-can/
 
 ## firmware での利用（手書き #define の置換）
 
-`generated/kart.h` に各メッセージの ID・構造体・pack/unpack・スケール変換が入る:
+`generated/kart_can.h` に各メッセージの ID・構造体・pack/unpack・スケール変換が入る:
 
 ```c
-#include "kart.h"
-struct kart_dc_gyro_xy_t m = { .gyro_x = ..., .gyro_y = ... };
+#include <kart_can.h>
+struct kart_can_dc_gyro_xy_t m = { .gyro_x = ..., .gyro_y = ... };
 uint8_t buf[8];
-kart_dc_gyro_xy_pack(buf, &m, sizeof(buf));   // → CAN送信
-// 受信側: kart_dc_gyro_xy_unpack(&m, data, len);
+kart_can_dc_gyro_xy_pack(buf, &m, sizeof(buf));   // → CAN送信
+// 受信側: kart_can_dc_gyro_xy_unpack(&m, data, len);
 ```
 
 Teensy(dc-firmware)/ESP32(data-logger) の `constants.hpp` の手書き `CAN_ID_*` は
-`KART_*_FRAME_ID` に置き換え可能。ビルドに `generated/kart.h`/`kart.c` を取り込む。
+`KART_CAN_*_FRAME_ID` に置き換え可能。ビルドに `generated/kart_can.h`/`.c` を取り込む。
 
 ## 対象ノード / IDマップ
 

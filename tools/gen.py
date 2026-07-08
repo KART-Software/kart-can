@@ -9,7 +9,7 @@
   3. kart.dbc を出力
   4. ラウンドトリップ自己テスト（エンコード→バイト列→デコード）でレイアウト検証
 
-C ヘッダ生成:  cantools generate_c_source generated/kart.dbc   （run.sh 参照）
+C ヘッダ生成:  cantools generate_c_source generated/kart.dbc --database-name kart_can   （run.sh 参照）
 python-can:    db = cantools.database.load_file("generated/kart.dbc"); db.decode_message(id, data)
 """
 from __future__ import annotations
