@@ -156,7 +156,7 @@ BO_ 1806 DL_70E: 8 data_logger
  SG_ gps_mag_dec : 32|16@1- (0.01,0) [0|0] "deg"  kart_machine_manager
  SG_ gps_head_veh : 0|32@1- (1e-05,0) [0|0] "deg"  kart_machine_manager
 
-BO_ 1856 KartControl: 3 data_logger
+BO_ 1856 Control: 3 data_logger
  SG_ auto_shift : 16|8@1+ (1,0) [0|0] ""  drive_controller
  SG_ launch_active : 8|8@1+ (1,0) [0|0] ""  drive_controller
  SG_ etc_mode : 0|8@1+ (1,0) [0|0] ""  drive_controller

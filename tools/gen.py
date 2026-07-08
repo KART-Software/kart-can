@@ -210,14 +210,14 @@ def run_selftests(db: Database) -> bool:
     dec = m.decode(data)
     check(approx(dec["gps_lat"], lat, 1e-6) and dec["gps_height"] == -12345, "DL_707 decode lat/height")
 
-    # 6) 統合制御フレーム KartControl: enum + マルチバイト (byte0/1/2)
-    m = db.get_message_by_name("KartControl")
+    # 6) 制御フレーム Control: enum + マルチバイト (byte0/1/2)
+    m = db.get_message_by_name("Control")
     data = m.encode({"etc_mode": "MOTOR_OFF", "launch_active": "ACTIVE", "auto_shift": "AUTO"})
-    check(data[0] == 4 and data[1] == 1 and data[2] == 1, "KartControl -> bytes [0x04,0x01,0x01]")
+    check(data[0] == 4 and data[1] == 1 and data[2] == 1, "Control -> bytes [0x04,0x01,0x01]")
     dec = m.decode(data)
     check(
         str(dec["etc_mode"]) == "MOTOR_OFF" and str(dec["auto_shift"]) == "AUTO",
-        "KartControl decode enum names",
+        "Control decode enum names",
     )
 
     return ok

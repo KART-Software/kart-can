@@ -146,7 +146,7 @@ nodes:
       # 制御信号 (data-logger → drive-controller)。制御用 CAN ID は 0x740 から始まり、
       # 制御信号が増えれば 0x741, 0x742... を割り当てる。0x740 は mode/launch/auto-shift を運ぶ。
       # 200ms 途絶で各値フェイルセーフ。
-      - name: KartControl
+      - name: Control
         id: 0x740
         dlc: 3
         cycle_ms: 100
