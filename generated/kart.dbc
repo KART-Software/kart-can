@@ -156,16 +156,16 @@ BO_ 1806 DL_70E: 8 data_logger
  SG_ gps_mag_dec : 32|16@1- (0.01,0) [0|0] "deg"  kart_machine_manager
  SG_ gps_head_veh : 0|32@1- (1e-05,0) [0|0] "deg"  kart_machine_manager
 
-BO_ 1856 Control: 3 data_logger
- SG_ auto_shift : 16|8@1+ (1,0) [0|0] ""  drive_controller
- SG_ launch_active : 8|8@1+ (1,0) [0|0] ""  drive_controller
- SG_ etc_mode : 0|8@1+ (1,0) [0|0] ""  drive_controller
+BO_ 1856 Control: 3 drive_controller
+ SG_ auto_shift : 16|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ launch_active : 8|8@1+ (1,0) [0|0] ""  kart_machine_manager
+ SG_ etc_mode : 0|8@1+ (1,0) [0|0] ""  kart_machine_manager
 
 
 
 
-CM_ BU_ data_logger "センサ送信 (ESP32-S3)。BMI160 IMU + ADS8688 ADC + u-blox GNSS。加えて drive-controller への制御信号 (0x740〜) を送信。";
-CM_ BU_ drive_controller "駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU+ギアを送信。";
+CM_ BU_ data_logger "センサ送信 (ESP32-S3)。BMI160 IMU + ADS8688 ADC + u-blox GNSS。";
+CM_ BU_ drive_controller "駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU+ギア、および制御入力状態(Control 0x740)を送信。";
 CM_ BU_ motec_ecu "[外部ノード] MoTeC エンジンECU（外部）。エンジンデータを送信、kart-machine-manager が受信。";
 CM_ SG_ 1521 lambda_ "表示側は未デコード";
 CM_ SG_ 1522 manifold_pressure "表示側は未デコード";
@@ -200,7 +200,7 @@ CM_ BO_ 1804 "data-logger 生バッファ byte 96-103（再構成の一部）";
 CM_ BO_ 1805 "data-logger 生バッファ byte 104-111（再構成の一部）";
 CM_ SG_ 1805 gps_flags3 "b0 invalidLlh";
 CM_ BO_ 1806 "data-logger 生バッファ byte 112-119（再構成の一部）";
-CM_ BO_ 1856 "制御信号フレーム (制御ID帯 0x740〜の先頭)。byte0=ETCモード, byte1=launch, byte2=auto-shift。200ms途絶でフェイルセーフ。";
+CM_ BO_ 1856 "制御信号フレーム (制御ID帯 0x740〜の先頭)。drive-controller が GPIO 制御入力状態を送信。byte0=ETCモード, byte1=launch, byte2=auto-shift。受信側は200ms途絶でフェイルセーフ。";
 CM_ SG_ 1856 auto_shift "0x01=オート(ON)、その他=マニュアル(OFF)。200ms途絶→manual";
 CM_ SG_ 1856 launch_active "0x01=active、その他=inactive。200ms途絶→inactive。通常ビルドではFSM無効";
 CM_ SG_ 1856 etc_mode "0=未指定(無視・現モード維持)。200ms途絶→NORMAL(MOTOR_OFFはラッチ)";
@@ -225,7 +225,7 @@ BA_ "GenMsgCycleTime" BO_ 1803 33;
 BA_ "GenMsgCycleTime" BO_ 1804 33;
 BA_ "GenMsgCycleTime" BO_ 1805 33;
 BA_ "GenMsgCycleTime" BO_ 1806 33;
-BA_ "GenMsgCycleTime" BO_ 1856 100;
+BA_ "GenMsgCycleTime" BO_ 1856 16;
 VAL_ 1523 ist_shift_status 0 "NONE" 1 "DOWN" 2 "UP" 3 "BOTH" ;
 VAL_ 1523 fan_enabled 0 "OFF" 1 "ON" ;
 VAL_ 1856 auto_shift 0 "MANUAL" 1 "AUTO" ;

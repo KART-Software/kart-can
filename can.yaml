@@ -30,7 +30,7 @@ nodes:
   # float32・リトルエンディアン（memcpy直書き、スケーリングなし）
   # --------------------------------------------------------------------------
   drive_controller:
-    description: 駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU+ギアを送信。
+    description: 駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU+ギア、および制御入力状態(Control 0x740)を送信。
     defaults: {endian: little}
     messages:
       - name: DC_GyroXY
@@ -64,6 +64,33 @@ nodes:
         cycle_ms: 16
         signals:
           - {name: accel_z, byte: 0, size: 32, type: float, unit: mg}
+
+      # 制御信号 (drive-controller が送信 → ログ/テレメトリ)。drive-controller が自身の
+      # GPIO 制御入力 (ETCモード/launch/auto-shift) の状態を CAN に出力する。制御用 CAN ID
+      # は 0x740 から始まり、制御信号が増えれば 0x741, 0x742... を割り当てる。
+      # 0x740 は mode/launch/auto-shift を運ぶ。受信側は 200ms 途絶でフェイルセーフ。
+      - name: Control
+        id: 0x740
+        dlc: 3
+        cycle_ms: 16
+        rx: [kart_machine_manager]
+        comment: "制御信号フレーム (制御ID帯 0x740〜の先頭)。drive-controller が GPIO 制御入力状態を送信。byte0=ETCモード, byte1=launch, byte2=auto-shift。受信側は200ms途絶でフェイルセーフ。"
+        signals:
+          - name: etc_mode
+            byte: 0
+            size: 8
+            comment: "0=未指定(無視・現モード維持)。200ms途絶→NORMAL(MOTOR_OFFはラッチ)"
+            choices: {1: CALIB, 2: NORMAL, 3: RESTRICTED, 4: MOTOR_OFF}
+          - name: launch_active
+            byte: 1
+            size: 8
+            comment: "0x01=active、その他=inactive。200ms途絶→inactive。通常ビルドではFSM無効"
+            choices: {0: INACTIVE, 1: ACTIVE}
+          - name: auto_shift
+            byte: 2
+            size: 8
+            comment: "0x01=オート(ON)、その他=マニュアル(OFF)。200ms途絶→manual"
+            choices: {0: MANUAL, 1: AUTO}
 
   # --------------------------------------------------------------------------
   # MoTeC エンジンECU（本リポジトリ外）: kart-machine-manager が受信・表示
@@ -141,33 +168,7 @@ nodes:
   # kart-machine-manager は受信するが生のままUDP転送（デコードなし）。
   # --------------------------------------------------------------------------
   data_logger:
-    description: センサ送信 (ESP32-S3)。BMI160 IMU + ADS8688 ADC + u-blox GNSS。加えて drive-controller への制御信号 (0x740〜) を送信。
-    messages:
-      # 制御信号 (data-logger → drive-controller)。制御用 CAN ID は 0x740 から始まり、
-      # 制御信号が増えれば 0x741, 0x742... を割り当てる。0x740 は mode/launch/auto-shift を運ぶ。
-      # 200ms 途絶で各値フェイルセーフ。
-      - name: Control
-        id: 0x740
-        dlc: 3
-        cycle_ms: 100
-        rx: [drive_controller]
-        comment: "制御信号フレーム (制御ID帯 0x740〜の先頭)。byte0=ETCモード, byte1=launch, byte2=auto-shift。200ms途絶でフェイルセーフ。"
-        signals:
-          - name: etc_mode
-            byte: 0
-            size: 8
-            comment: "0=未指定(無視・現モード維持)。200ms途絶→NORMAL(MOTOR_OFFはラッチ)"
-            choices: {1: CALIB, 2: NORMAL, 3: RESTRICTED, 4: MOTOR_OFF}
-          - name: launch_active
-            byte: 1
-            size: 8
-            comment: "0x01=active、その他=inactive。200ms途絶→inactive。通常ビルドではFSM無効"
-            choices: {0: INACTIVE, 1: ACTIVE}
-          - name: auto_shift
-            byte: 2
-            size: 8
-            comment: "0x01=オート(ON)、その他=マニュアル(OFF)。200ms途絶→manual"
-            choices: {0: MANUAL, 1: AUTO}
+    description: センサ送信 (ESP32-S3)。BMI160 IMU + ADS8688 ADC + u-blox GNSS。
     reassembled:
       base_id: 0x700
       frame_bytes: 8

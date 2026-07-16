@@ -81,8 +81,8 @@ Teensy(dc-firmware)/ESP32(data-logger) の `constants.hpp` の手書き `CAN_ID_
 |---|---|---|
 | motec_ecu（外部） | 0x5F0–0x5F4 | エンジンデータ → kart-machine-manager |
 | drive_controller | 0x600–0x603 | IMU姿勢 + ギア |
+| drive_controller | 0x740〜 | 制御信号（制御ID帯の先頭。0x740 = mode/launch/auto-shift）→ ログ/テレメトリ |
 | data_logger | 0x700–0x70E | BMI160+ADS8688+GNSS の120Bバッファ（15分割） |
-| data_logger | 0x740〜 | 制御信号（制御ID帯の先頭。0x740 = mode/launch/auto-shift）→ drive-controller |
 
 > **要確認事項**（0x600系の受信者不在, 加速度の単位, BMI160ジャイロY/Zバグ 等）は
 > `docs/can-spec.md` の「不整合・注意点」を参照。定義を正とする前に確認すること。
