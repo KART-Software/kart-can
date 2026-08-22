@@ -30,9 +30,11 @@ nodes:
   # float32・リトルエンディアン（memcpy直書き、スケーリングなし）
   # --------------------------------------------------------------------------
   drive_controller:
-    description: 駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU+ギア、および制御入力状態(Control 0x740)を送信。
+    description: 駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU (IAM-20680HP)+ギア、および制御入力状態(Control 0x740)を送信。
     defaults: {endian: little}
     messages:
+      # IMU は IAM-20680HP (6 軸: gyro+accel) を drive-controller が読んで
+      # 0x600-0x603 で送信する (旧 data-logger の BMI160 は基板ごと廃止)。
       - name: DC_GyroXY
         id: 0x600
         dlc: 8
@@ -53,7 +55,7 @@ nodes:
         id: 0x602
         dlc: 8
         cycle_ms: 16
-        comment: "単位要確認: ヘッダはm/s²だが実データはmg（can-spec.md 注意点4）"
+        comment: "単位要確認: 旧実装はヘッダm/s²・実データmg（can-spec.md 注意点4）。IAM-20680HP 移行実装時に単位を確定させること"
         signals:
           - {name: accel_x, byte: 0, size: 32, type: float, unit: mg}
           - {name: accel_y, byte: 4, size: 32, type: float, unit: mg}
@@ -160,15 +162,16 @@ nodes:
           - {name: coolant_temp,  byte: 4, size: 16, scale: 0.1, unit: degC}
 
   # --------------------------------------------------------------------------
-  # data-logger (ESP32-S3): センサ送信専用
-  # 120Bバッファを 8B×15フレーム (0x700-0x70E) に分割して ~33ms 毎にバースト送信。
-  # 下の signals は「再構成後120Bバッファの絶対バイトオフセット」。
-  # gen.py が byte//8 で各フレーム(0x700+i)へ自動分割する（全フィールドが境界内に収まる）。
-  # ⚠ エンディアン混在: BMI160/ADS8688=big, GPS(UBX)=little。
-  # kart-machine-manager は受信するが生のままUDP転送（デコードなし）。
+  # data-logger (i.MX8MM Cortex-M4, data-logger-zephyr apps/can-gw):
+  # ADS8688 8ch×16bit を 30Hz でサンプリングし 16B を 0x700/0x701 の 2 フレームで
+  # 送信する。M4 は同じフレームを物理 CAN バスと rpmsg (Linux can0) の両方へ流す。
+  # 旧 ESP32-S3 版 (BMI160+ADS8688+GPS の 120B / 0x700-0x70E) は基板廃止に伴い
+  # 削除 (git 履歴参照)。GPS は新設計では UART で Linux 直結 (CAN 非経由)、
+  # IMU は drive-controller が IAM-20680HP で送信 (0x600-0x603)。
+  # ⚠ ADS8688 は big-endian 生カウント (0-5.12V, V = raw * 7.8125e-5)。
   # --------------------------------------------------------------------------
   data_logger:
-    description: センサ送信 (ESP32-S3)。BMI160 IMU + ADS8688 ADC + u-blox GNSS。
+    description: センサ送信 (i.MX8MM Cortex-M4)。ADS8688 ADC 8ch。
     reassembled:
       base_id: 0x700
       frame_bytes: 8
@@ -176,53 +179,12 @@ nodes:
       cycle_ms: 33
       rx: [kart_machine_manager]
       signals:
-        # --- BMI160 IMU  buffer 0-11  (int16, big-endian, 生カウント) ---
-        - {name: dl_accel_x, byte: 0,  size: 16, type: int, endian: big, comment: "±2g ≒16384 LSB/g"}
-        - {name: dl_accel_y, byte: 2,  size: 16, type: int, endian: big}
-        - {name: dl_accel_z, byte: 4,  size: 16, type: int, endian: big}
-        - {name: dl_gyro_x,  byte: 6,  size: 16, type: int, endian: big, comment: "±250dps ≒131.2 LSB/(°/s)"}
-        - {name: dl_gyro_y,  byte: 8,  size: 16, type: int, endian: big, comment: "⚠firmwareバグ: 現状gyro_xを重複送信 (bmi160.cpp:70-73)"}
-        - {name: dl_gyro_z,  byte: 10, size: 16, type: int, endian: big, comment: "⚠firmwareバグ: 現状gyro_xを重複送信"}
-        # --- ADS8688 ADC  buffer 12-27  (uint16, big-endian, 生カウント, 0-5.12V, V=raw*7.8125e-5) ---
-        - {name: dl_adc_ch0, byte: 12, size: 16, endian: big}
-        - {name: dl_adc_ch1, byte: 14, size: 16, endian: big}
-        - {name: dl_adc_ch2, byte: 16, size: 16, endian: big}
-        - {name: dl_adc_ch3, byte: 18, size: 16, endian: big}
-        - {name: dl_adc_ch4, byte: 20, size: 16, endian: big}
-        - {name: dl_adc_ch5, byte: 22, size: 16, endian: big}
-        - {name: dl_adc_ch6, byte: 24, size: 16, endian: big}
-        - {name: dl_adc_ch7, byte: 26, size: 16, endian: big}
-        # --- u-blox UBX-NAV-PVT  buffer 28-119  (little-endian, buffer byte = 28 + UBXoffset) ---
-        - {name: gps_itow,     byte: 28,  size: 32, endian: little, unit: ms}
-        - {name: gps_year,     byte: 32,  size: 16, endian: little}
-        - {name: gps_month,    byte: 34,  size: 8}
-        - {name: gps_day,      byte: 35,  size: 8}
-        - {name: gps_hour,     byte: 36,  size: 8}
-        - {name: gps_min,      byte: 37,  size: 8}
-        - {name: gps_sec,      byte: 38,  size: 8}
-        - {name: gps_valid,    byte: 39,  size: 8, comment: "bitfield: b0 validDate,b1 validTime,b2 fullyResolved,b3 validMag"}
-        - {name: gps_t_acc,    byte: 40,  size: 32, endian: little, unit: ns}
-        - {name: gps_nano,     byte: 44,  size: 32, type: int, endian: little, unit: ns}
-        - {name: gps_fix_type, byte: 48,  size: 8, comment: "0=nofix,2=2D,3=3D,4=GNSS+DR,5=time"}
-        - {name: gps_flags,    byte: 49,  size: 8, comment: "b0 gnssFixOK 他"}
-        - {name: gps_flags2,   byte: 50,  size: 8}
-        - {name: gps_num_sv,   byte: 51,  size: 8, comment: "使用衛星数"}
-        - {name: gps_lon,      byte: 52,  size: 32, type: int, endian: little, scale: 1.0e-7, unit: deg}
-        - {name: gps_lat,      byte: 56,  size: 32, type: int, endian: little, scale: 1.0e-7, unit: deg}
-        - {name: gps_height,   byte: 60,  size: 32, type: int, endian: little, unit: mm}
-        - {name: gps_h_msl,    byte: 64,  size: 32, type: int, endian: little, unit: mm}
-        - {name: gps_h_acc,    byte: 68,  size: 32, endian: little, unit: mm}
-        - {name: gps_v_acc,    byte: 72,  size: 32, endian: little, unit: mm}
-        - {name: gps_vel_n,    byte: 76,  size: 32, type: int, endian: little, unit: mm/s}
-        - {name: gps_vel_e,    byte: 80,  size: 32, type: int, endian: little, unit: mm/s}
-        - {name: gps_vel_d,    byte: 84,  size: 32, type: int, endian: little, unit: mm/s}
-        - {name: gps_g_speed,  byte: 88,  size: 32, type: int, endian: little, unit: mm/s}
-        - {name: gps_head_mot, byte: 92,  size: 32, type: int, endian: little, scale: 1.0e-5, unit: deg}
-        - {name: gps_s_acc,    byte: 96,  size: 32, endian: little, unit: mm/s}
-        - {name: gps_head_acc, byte: 100, size: 32, endian: little, scale: 1.0e-5, unit: deg}
-        - {name: gps_p_dop,    byte: 104, size: 16, endian: little, scale: 0.01}
-        - {name: gps_flags3,   byte: 106, size: 8, comment: "b0 invalidLlh"}
-        # buffer 107-111 = reserved（省略）
-        - {name: gps_head_veh, byte: 112, size: 32, type: int, endian: little, scale: 1.0e-5, unit: deg}
-        - {name: gps_mag_dec,  byte: 116, size: 16, type: int, endian: little, scale: 0.01, unit: deg}
-        - {name: gps_mag_acc,  byte: 118, size: 16, endian: little, scale: 0.01, unit: deg}
+        # --- ADS8688 ADC  buffer 0-15  (uint16, big-endian, 生カウント, 0-5.12V) ---
+        - {name: dl_adc_ch0, byte: 0,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch1, byte: 2,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch2, byte: 4,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch3, byte: 6,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch4, byte: 8,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch5, byte: 10, size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch6, byte: 12, size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch7, byte: 14, size: 16, endian: big, scale: 7.8125e-5, unit: V}

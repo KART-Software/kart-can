@@ -195,20 +195,21 @@ def run_selftests(db: Database) -> bool:
     data = m.encode({"gyro_z": 10.0, "gear": 255})
     check(len(data) == 5 and data[4] == 0xFF, "GyroZGear dlc=5, gear byte=0xFF")
 
-    # 4) big-endian signed int16 （data-logger BMI160）
+    # 4) big-endian uint16 + 7.8125e-5 スケール （data-logger ADS8688、M4 版）
+    #    テストベクタは実機フレーム: M4 can-gw が送った 0x700 の実データ
+    #    F6 C1 7F F8 7F F6 7F F6 (ch0 = ポテンショ 4.93V、他は入力オープン)
     m = db.get_message_by_name("DL_700")
-    data = m.encode({"dl_accel_x": -1000, "dl_accel_y": 2000, "dl_accel_z": -3000, "dl_gyro_x": 500})
-    check(data[0:2] == struct.pack(">h", -1000), "DL_700 accel_x=-1000 -> big-endian signed int16")
-    dec = m.decode(data)
-    check(dec["dl_accel_x"] == -1000 and dec["dl_gyro_x"] == 500, "DL_700 decode signed ints")
+    dec = m.decode(bytes.fromhex("F6C17FF87FF67FF6"))
+    check(approx(dec["dl_adc_ch0"], 63169 * 7.8125e-5, 1e-3), "DL_700 decode ch0=0xF6C1 -> 4.935V")
+    check(approx(dec["dl_adc_ch1"], 0x7FF8 * 7.8125e-5, 1e-3), "DL_700 decode ch1 (open input ~2.56V)")
+    data = m.encode(dec)
+    check(data == bytes.fromhex("F6C17FF87FF67FF6"), "DL_700 re-encode roundtrip")
 
-    # 5) little-endian signed int32 + 1e-7 スケール （data-logger GPS lat/height）
-    m = db.get_message_by_name("DL_707")
-    lat = 35.6812345
-    data = m.encode({"gps_lat": lat, "gps_height": -12345})
-    check(data[0:4] == struct.pack("<i", round(lat / 1e-7)), "DL_707 gps_lat -> little-endian int32 x1e-7")
-    dec = m.decode(data)
-    check(approx(dec["gps_lat"], lat, 1e-6) and dec["gps_height"] == -12345, "DL_707 decode lat/height")
+    # 5) 2 フレーム目 (ch4-7) の存在と big-endian 配置
+    m = db.get_message_by_name("DL_701")
+    data = m.encode({"dl_adc_ch4": 0, "dl_adc_ch5": 0xFFFF * 7.8125e-5,
+                     "dl_adc_ch6": 0, "dl_adc_ch7": 0})
+    check(data[2:4] == struct.pack(">H", 0xFFFF), "DL_701 ch5=full-scale -> big-endian 0xFFFF at byte2-3")
 
     # 6) 制御フレーム Control: enum + マルチバイト (byte0/1/2)
     m = db.get_message_by_name("Control")
