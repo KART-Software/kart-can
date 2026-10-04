@@ -5,7 +5,7 @@
   1. can.yaml を読む（人間が編集する唯一のソース）
   2. cantools の Database / Message / Signal オブジェクトを組み立てる
      - byte オフセット + endian から DBC のビット番号へ変換
-     - data_logger は 120B バッファを byte//8 で 15 フレームへ自動分割
+     - data_logger の reassembled は再構成バッファを frame_bytes 毎に base_id+i へ自動分割
   3. kart.dbc を出力
   4. ラウンドトリップ自己テスト（エンコード→バイト列→デコード）でレイアウト検証
 
@@ -211,15 +211,28 @@ def run_selftests(db: Database) -> bool:
                      "dl_adc_ch6": 0, "dl_adc_ch7": 0})
     check(data[2:4] == struct.pack(">H", 0xFFFF), "DL_701 ch5=full-scale -> big-endian 0xFFFF at byte2-3")
 
-    # 6) 制御フレーム Control: enum + マルチバイト (byte0/1/2)
+    # 6) 制御フレーム Control (33ms) と Shift (10ms)。Control の byte0-2 は旧 DLC3 フレームと互換
     m = db.get_message_by_name("Control")
-    data = m.encode({"etc_mode": "MOTOR_OFF", "launch_active": "ACTIVE", "auto_shift": "AUTO"})
-    check(data[0] == 4 and data[1] == 1 and data[2] == 1, "Control -> bytes [0x04,0x01,0x01]")
+    data = m.encode({"etc_mode": "MOTOR_OFF", "launch_active": "ACTIVE", "auto_shift": "AUTO", "starter": "ON"})
+    check(len(data) == 4 and data[0] == 4 and data[1] == 1 and data[2] == 1 and data[3] == 1,
+          "Control dlc=4 -> [0x04,0x01,0x01,0x01] (byte0-2 は旧フレーム互換)")
     dec = m.decode(data)
-    check(
-        str(dec["etc_mode"]) == "MOTOR_OFF" and str(dec["auto_shift"]) == "AUTO",
-        "Control decode enum names",
-    )
+    check(str(dec["etc_mode"]) == "MOTOR_OFF" and str(dec["auto_shift"]) == "AUTO", "Control decode enum names")
+    check(m.cycle_time == 33, "Control cycle 33ms")
+    m = db.get_message_by_name("Shift")
+    data = m.encode({"shift_up": "PRESSED", "shift_down": "RELEASED"})
+    check(len(data) == 2 and data[0] == 1 and data[1] == 0, "Shift dlc=2 -> [0x01,0x00]")
+    check(m.frame_id == 0x741 and m.cycle_time == 10, "Shift id=0x741 cycle 10ms")
+
+    # 7) drive_controller の uint16 スケール付きフレーム (little-endian)
+    m = db.get_message_by_name("DC_Pedals")
+    data = m.encode({"apps": 12.34, "tps": 100.0, "clutch": 0.0, "brake_press_rear": 250.0})
+    check(data[0:2] == struct.pack("<H", 1234) and data[6:8] == struct.pack("<H", 2500),
+          "DC_Pedals apps=12.34% -> 1234 LE, brake 250.0psi -> 2500 LE")
+    m = db.get_message_by_name("DC_WheelPulse")
+    data = m.encode({"pulse_fl": 65535, "pulse_fr": 0, "pulse_rl": 1, "pulse_rr": 256})
+    check(data[0:2] == b"\xff\xff" and data[6:8] == struct.pack("<H", 256),
+          "DC_WheelPulse raw uint16 counts LE")
 
     return ok
 

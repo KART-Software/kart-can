@@ -9,7 +9,7 @@ CANTOOLS=.venv/bin/cantools
 
 if [ ! -x "$PY" ]; then
   echo "venv がありません。セットアップします..."
-  uv venv --python 3.12 .venv
+  uv venv --clear --python 3.12 .venv
   uv pip install --python "$PY" cantools pyyaml
 fi
 

@@ -2,43 +2,117 @@
 #  カート CAN 定義 — 単一ソース（人間が読み書きするのはこのファイルだけ）
 #
 #  ここから gen.py が生成する:
-#    - kart.dbc  … 汎用CANツール用 (candump, cantools, Vector, PCAN, python-can)
-#    - kart.h/.c … firmware用Cコード (Teensy/ESP32 の手書き #define を置換)
-#    - kart.py   … python-can 用 decode/encode (cantools)
+#    - generated/kart.dbc        … 汎用CANツール用 (candump, cantools, Vector, PCAN, python-can)
+#    - generated/kart_can.h/.c   … firmware用Cコード (cantools generate_c_source)
+#  python からは kart.dbc を cantools / python-can で直接ロードする。
 #
 #  記法:
-#    byte   : そのフレーム先頭からのバイトオフセット（data_logger は再構成後120Bの絶対オフセット）
+#    byte   : そのフレーム先頭からのバイトオフセット（reassembled は再構成後バッファの絶対オフセット）
 #    size   : ビット長（8の倍数＝バイト境界のみ。gen.py が DBC のビット番号へ変換）
-#    endian : big(Motorola) / little(Intel)。省略時はメッセージ既定→little
+#    endian : big(Motorola) / little(Intel)。省略時はノード既定 (defaults.endian) → little
 #    type   : uint(既定) / int(符号付き) / float(IEEE754 f32)
 #    scale  : 物理値 = raw * scale + offset（省略時 scale=1, offset=0）
 #    choices: 値→名称の対応表（enum）
-#    cycle_ms: 送信周期。rx: 受信ノード（ドキュメント用）
+#    cycle_ms: 送信周期 (DBC GenMsgCycleTime → KART_CAN_*_CYCLE_TIME_MS)。rx: 受信ノード
+#    comment: DBC と C ヘッダに出る説明。生成物に現れない情報 (送信タイミングの詳細、
+#             フェイルセーフ、移行状態) はここに書かず docs/can-spec.md に書く
 #
-#  出典・背景は can-spec.md、要確認事項は can-spec.md の「不整合・注意点」を参照。
+#  システム全体の構成は kart-soft-docs (KART-Software/kart-soft-docs) を参照。
 # ============================================================================
 
 bus:
   name: kart
-  baudrate: 1000000        # 実バス=1Mbps（data-logger/drive-controller で一致）。
-                           # ※ Arduinoモックのみ500kbps（can-spec.md 注意点3）。
+  baudrate: 1000000        # 1Mbps, Classic CAN 2.0, 標準 11bit ID
 
 nodes:
 
-  # --------------------------------------------------------------------------
-  # 駆動系ECU (Teensy 4.1): IMU姿勢 + ギアを 16ms(~62.5Hz) 周期で送信
-  # float32・リトルエンディアン（memcpy直書き、スケーリングなし）
-  # --------------------------------------------------------------------------
+  # kmm (kart-machine-manager, DEBIX Infinity) の A コア: Linux。
+  # CAN コントローラは M コア (data_logger) が所有し、Linux は rpmsg 経由で全フレームを受け取る。
+  kart_machine_manager:
+    description: kmm A コア (Linux)。M コアのゲートウェイ経由で CAN 全受信。インパネ表示・ログ・クラウド送信。実バスへ送信しない。
+
+  # kmm の M コア: data-logger-zephyr (i.MX8MM Cortex-M4 / 8MP M7, apps/can-gw)。
+  # kmm の CAN コントローラ・ADC (ADS8688)・GPIO (コックピットスイッチ) を所有する。
+  data_logger:
+    description: kmm M コア (Cortex-M4, data-logger-zephyr apps/can-gw)。ADS8688 ADC とコックピットスイッチを送信。Linux 向け CAN ゲートウェイ。
+    defaults: {endian: big}
+    messages:
+      # 制御用 CAN ID は 0x740 から順に割り当てる。
+      - name: Control
+        id: 0x740
+        dlc: 4
+        cycle_ms: 33
+        rx: [drive_controller, kart_machine_manager]
+        comment: "コックピットスイッチ状態 (ETC モード / ローンチ / オートシフト / セル)"
+        signals:
+          - name: etc_mode
+            byte: 0
+            size: 8
+            comment: "ETC モード選択スイッチ。0=未指定"
+            choices: {1: CALIB, 2: NORMAL, 3: RESTRICTED, 4: MOTOR_OFF}
+          - name: launch_active
+            byte: 1
+            size: 8
+            comment: "ローンチコントロール ON/OFF スイッチ"
+            choices: {0: INACTIVE, 1: ACTIVE}
+          - name: auto_shift
+            byte: 2
+            size: 8
+            comment: "オートシフト ON/OFF スイッチ"
+            choices: {0: MANUAL, 1: AUTO}
+          - name: starter
+            byte: 3
+            size: 8
+            comment: "セルスイッチ。押下中 1"
+            choices: {0: "OFF", 1: "ON"}
+
+      - name: Shift
+        id: 0x741
+        dlc: 2
+        cycle_ms: 10
+        rx: [drive_controller, kart_machine_manager]
+        comment: "シフトパドル状態"
+        signals:
+          - name: shift_up
+            byte: 0
+            size: 8
+            comment: "シフトアップパドル。押下中 1"
+            choices: {0: RELEASED, 1: PRESSED}
+          - name: shift_down
+            byte: 1
+            size: 8
+            comment: "シフトダウンパドル。押下中 1"
+            choices: {0: RELEASED, 1: PRESSED}
+
+    # ADS8688 8ch×16bit (big-endian 生カウント, V = raw * 7.8125e-5) を 16B → 0x700/0x701 の 2 フレームで送信。
+    # 前方センサー (左右サスペンションストローク、舵角、前ブレーキ圧) の ch 割り当ては未定。
+    reassembled:
+      base_id: 0x700
+      frame_bytes: 8
+      dlc: 8
+      cycle_ms: 33
+      rx: [kart_machine_manager]
+      signals:
+        - {name: dl_adc_ch0, byte: 0,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch1, byte: 2,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch2, byte: 4,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch3, byte: 6,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch4, byte: 8,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch5, byte: 10, size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch6, byte: 12, size: 16, endian: big, scale: 7.8125e-5, unit: V}
+        - {name: dl_adc_ch7, byte: 14, size: 16, endian: big, scale: 7.8125e-5, unit: V}
+
+  # drive-controller (Teensy 4.1, 車両後方)。0x600-0x603 は float32・リトルエンディアン。0x604 以降は uint16 スケール付き。
   drive_controller:
-    description: 駆動系ECU (Teensy 4.1)。ETC/オートシフタ/ローンチ制御。IMU (IAM-20680HP)+ギア、および制御入力状態(Control 0x740)を送信。
+    description: 駆動系ECU (Teensy 4.1, 車両後方)。ETC/クラッチ/シフト/セルモーター/ブレーキランプ制御。IMU・APPS/TPS・後方センサー・車輪速・自身の状態を送信。
     defaults: {endian: little}
     messages:
-      # IMU は IAM-20680HP (6 軸: gyro+accel) を drive-controller が読んで
-      # 0x600-0x603 で送信する (旧 data-logger の BMI160 は基板ごと廃止)。
       - name: DC_GyroXY
         id: 0x600
         dlc: 8
         cycle_ms: 16
+        rx: [kart_machine_manager]
+        comment: "IMU (IAM-20680HP) ジャイロ X/Y"
         signals:
           - {name: gyro_x, byte: 0, size: 32, type: float, unit: dps}
           - {name: gyro_y, byte: 4, size: 32, type: float, unit: dps}
@@ -47,6 +121,8 @@ nodes:
         id: 0x601
         dlc: 5
         cycle_ms: 16
+        rx: [kart_machine_manager]
+        comment: "IMU ジャイロ Z + ギア位置"
         signals:
           - {name: gyro_z, byte: 0, size: 32, type: float, unit: dps}
           - {name: gear,   byte: 4, size: 8,  type: uint, comment: "0xFF=不明, 0=N, 1-6=段"}
@@ -55,7 +131,8 @@ nodes:
         id: 0x602
         dlc: 8
         cycle_ms: 16
-        comment: "単位要確認: 旧実装はヘッダm/s²・実データmg（can-spec.md 注意点4）。IAM-20680HP 移行実装時に単位を確定させること"
+        rx: [kart_machine_manager]
+        comment: "IMU 加速度 X/Y (単位要確認: 旧実装は mg)"
         signals:
           - {name: accel_x, byte: 0, size: 32, type: float, unit: mg}
           - {name: accel_y, byte: 4, size: 32, type: float, unit: mg}
@@ -64,43 +141,114 @@ nodes:
         id: 0x603
         dlc: 4
         cycle_ms: 16
+        rx: [kart_machine_manager]
+        comment: "IMU 加速度 Z"
         signals:
           - {name: accel_z, byte: 0, size: 32, type: float, unit: mg}
 
-      # 制御信号 (drive-controller が送信 → ログ/テレメトリ)。drive-controller が自身の
-      # GPIO 制御入力 (ETCモード/launch/auto-shift) の状態を CAN に出力する。制御用 CAN ID
-      # は 0x740 から始まり、制御信号が増えれば 0x741, 0x742... を割り当てる。
-      # 0x740 は mode/launch/auto-shift を運ぶ。受信側は 200ms 途絶でフェイルセーフ。
-      - name: Control
-        id: 0x740
-        dlc: 3
-        cycle_ms: 16
+      - name: DC_Pedals
+        id: 0x604
+        dlc: 8
+        cycle_ms: 20
         rx: [kart_machine_manager]
-        comment: "制御信号フレーム (制御ID帯 0x740〜の先頭)。drive-controller が GPIO 制御入力状態を送信。byte0=ETCモード, byte1=launch, byte2=auto-shift。受信側は200ms途絶でフェイルセーフ。"
+        comment: "ペダル・スロットル・クラッチ・後ろブレーキ圧 (drive_controller が算出した物理値)"
+        signals:
+          - {name: apps,             byte: 0, size: 16, scale: 0.01, unit: "%",  comment: "採用したアクセルペダル開度 (APPS 2 系統から算出)"}
+          - {name: tps,              byte: 2, size: 16, scale: 0.01, unit: "%",  comment: "スロットル開度 (TPS 2 系統から算出)"}
+          - {name: clutch,           byte: 4, size: 16, scale: 0.01, unit: "%",  comment: "クラッチ位置"}
+          - {name: brake_press_rear, byte: 6, size: 16, scale: 0.1,  unit: psi, comment: "後ろブレーキ圧"}
+
+      - name: DC_EtcRaw
+        id: 0x605
+        dlc: 8
+        cycle_ms: 20
+        rx: [kart_machine_manager]
+        comment: "APPS / TPS 各 2 系統の生値 (drive_controller の ADS8688 カウント)"
+        signals:
+          - {name: apps_1, byte: 0, size: 16, scale: 7.8125e-5, unit: V}
+          - {name: apps_2, byte: 2, size: 16, scale: 7.8125e-5, unit: V}
+          - {name: tps_1,  byte: 4, size: 16, scale: 7.8125e-5, unit: V}
+          - {name: tps_2,  byte: 6, size: 16, scale: 7.8125e-5, unit: V}
+
+      - name: DC_StrokeRear
+        id: 0x606
+        dlc: 4
+        cycle_ms: 20
+        rx: [kart_machine_manager]
+        comment: "後ろ左右サスペンションストローク (センサー電圧)"
+        signals:
+          - {name: stroke_rl, byte: 0, size: 16, scale: 0.01, unit: V}
+          - {name: stroke_rr, byte: 2, size: 16, scale: 0.01, unit: V}
+
+      - name: DC_WheelSpeed
+        id: 0x607
+        dlc: 8
+        cycle_ms: 20
+        rx: [kart_machine_manager]
+        comment: "車輪速 4 輪"
+        signals:
+          - {name: wheel_fl, byte: 0, size: 16, scale: 0.01, unit: km/h}
+          - {name: wheel_fr, byte: 2, size: 16, scale: 0.01, unit: km/h}
+          - {name: wheel_rl, byte: 4, size: 16, scale: 0.01, unit: km/h}
+          - {name: wheel_rr, byte: 6, size: 16, scale: 0.01, unit: km/h}
+
+      - name: DC_WheelPulse
+        id: 0x608
+        dlc: 8
+        cycle_ms: 20
+        rx: [kart_machine_manager]
+        comment: "車輪速パルスの生カウント 4 輪 (累積、uint16 でラップ)"
+        signals:
+          - {name: pulse_fl, byte: 0, size: 16, unit: count}
+          - {name: pulse_fr, byte: 2, size: 16, unit: count}
+          - {name: pulse_rl, byte: 4, size: 16, unit: count}
+          - {name: pulse_rr, byte: 6, size: 16, unit: count}
+
+      - name: DC_Engine
+        id: 0x609
+        dlc: 4
+        cycle_ms: 20
+        rx: [kart_machine_manager]
+        comment: "エンジン回転数 (drive_controller のパルス計測値)"
+        signals:
+          - {name: engine_rpm, byte: 0, size: 16, unit: rpm}
+          - {name: clutch_rpm, byte: 2, size: 16, unit: rpm, comment: "クラッチ後 (出力軸) 回転数"}
+
+      - name: DC_Status
+        id: 0x60A
+        dlc: 5
+        cycle_ms: 33
+        rx: [kart_machine_manager]
+        comment: "drive_controller が適用中の制御状態とリレー状態"
         signals:
           - name: etc_mode
             byte: 0
             size: 8
-            comment: "0=未指定(無視・現モード維持)。200ms途絶→NORMAL(MOTOR_OFFはラッチ)"
+            comment: "適用中の ETC モード"
             choices: {1: CALIB, 2: NORMAL, 3: RESTRICTED, 4: MOTOR_OFF}
           - name: launch_active
             byte: 1
             size: 8
-            comment: "0x01=active、その他=inactive。200ms途絶→inactive。通常ビルドではFSM無効"
             choices: {0: INACTIVE, 1: ACTIVE}
           - name: auto_shift
             byte: 2
             size: 8
-            comment: "0x01=オート(ON)、その他=マニュアル(OFF)。200ms途絶→manual"
             choices: {0: MANUAL, 1: AUTO}
+          - name: starter_relay
+            byte: 3
+            size: 8
+            comment: "セルモーターリレー出力"
+            choices: {0: "OFF", 1: "ON"}
+          - name: shutdown_loop
+            byte: 4
+            size: 8
+            comment: "Shutdown Circuit (AND 回路) の出力状態"
+            choices: {0: OPEN, 1: CLOSED}
 
-  # --------------------------------------------------------------------------
-  # MoTeC エンジンECU（本リポジトリ外）: kart-machine-manager が受信・表示
-  # uint16・ビッグエンディアン・スケーリング付き
-  # --------------------------------------------------------------------------
+  # MoTeC M800 エンジンECU (外部、車両後方)。uint16・ビッグエンディアン・スケーリング付き。
   motec_ecu:
     external: true
-    description: MoTeC エンジンECU（外部）。エンジンデータを送信、kart-machine-manager が受信。
+    description: MoTeC M800 エンジンECU（外部）。エンジンデータを送信。
     defaults: {endian: big}
     messages:
       - name: MoTeC_Engine1
@@ -116,19 +264,20 @@ nodes:
       - name: MoTeC_Engine2
         id: 0x5F1
         dlc: 8
-        rx: [kart_machine_manager]
+        rx: [kart_machine_manager, drive_controller]
+        comment: "battery_voltage は drive_controller が Vbat として使用"
         signals:
           - {name: oil_press,       byte: 0, size: 16, scale: 0.1}
           - {name: gear_voltage,    byte: 2, size: 16, scale: 0.001, unit: V}
           - {name: battery_voltage, byte: 4, size: 16, scale: 0.01,  unit: V}
-          - {name: lambda_,         byte: 6, size: 16, scale: 0.001, comment: "表示側は未デコード"}
+          - {name: lambda_,         byte: 6, size: 16, scale: 0.001}
 
       - name: MoTeC_Engine3
         id: 0x5F2
         dlc: 8
         rx: [kart_machine_manager]
         signals:
-          - {name: manifold_pressure, byte: 0, size: 16, scale: 0.1, unit: kPa, comment: "表示側は未デコード"}
+          - {name: manifold_pressure, byte: 0, size: 16, scale: 0.1, unit: kPa}
           - {name: fuel_press,        byte: 2, size: 16, scale: 0.1}
           - {name: brake_press_front, byte: 4, size: 16, scale: 0.1}
           - {name: brake_press_rear,  byte: 6, size: 16, scale: 0.1}
@@ -141,50 +290,20 @@ nodes:
           - name: fan_enabled
             byte: 0
             size: 16
-            comment: "表示側は下位バイト(data[1])をbool化"
             choices: {0: "OFF", 1: "ON"}   # クォート必須（YAML 1.1 は OFF/ON を真偽値に変換）
           - name: ist_shift_status
             byte: 2
             size: 16
-            comment: "(istUp,istDown): 0=なし,1=DOWN,2=UP,3=両方。表示側未デコード"
+            comment: "(istUp,istDown): 0=なし,1=DOWN,2=UP,3=両方"
             choices: {0: NONE, 1: DOWN, 2: UP, 3: BOTH}
-          - {name: input_rpm,  byte: 4, size: 16, unit: rpm, comment: "表示側未デコード"}
-          - {name: output_rpm, byte: 6, size: 16, unit: rpm, comment: "表示側未デコード"}
+          - {name: input_rpm,  byte: 4, size: 16, unit: rpm}
+          - {name: output_rpm, byte: 6, size: 16, unit: rpm}
 
       - name: MoTeC_Temps2
         id: 0x5F4
         dlc: 6
         rx: [kart_machine_manager]
-        comment: "表示デコードなし・UDP転送のみ"
         signals:
           - {name: oil_temp2,     byte: 0, size: 16, scale: 0.1, unit: degC}
           - {name: oil_temp3,     byte: 2, size: 16, scale: 0.1, unit: degC}
           - {name: coolant_temp,  byte: 4, size: 16, scale: 0.1, unit: degC}
-
-  # --------------------------------------------------------------------------
-  # data-logger (i.MX8MM Cortex-M4, data-logger-zephyr apps/can-gw):
-  # ADS8688 8ch×16bit を 30Hz でサンプリングし 16B を 0x700/0x701 の 2 フレームで
-  # 送信する。M4 は同じフレームを物理 CAN バスと rpmsg (Linux can0) の両方へ流す。
-  # 旧 ESP32-S3 版 (BMI160+ADS8688+GPS の 120B / 0x700-0x70E) は基板廃止に伴い
-  # 削除 (git 履歴参照)。GPS は新設計では UART で Linux 直結 (CAN 非経由)、
-  # IMU は drive-controller が IAM-20680HP で送信 (0x600-0x603)。
-  # ⚠ ADS8688 は big-endian 生カウント (0-5.12V, V = raw * 7.8125e-5)。
-  # --------------------------------------------------------------------------
-  data_logger:
-    description: センサ送信 (i.MX8MM Cortex-M4)。ADS8688 ADC 8ch。
-    reassembled:
-      base_id: 0x700
-      frame_bytes: 8
-      dlc: 8
-      cycle_ms: 33
-      rx: [kart_machine_manager]
-      signals:
-        # --- ADS8688 ADC  buffer 0-15  (uint16, big-endian, 生カウント, 0-5.12V) ---
-        - {name: dl_adc_ch0, byte: 0,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
-        - {name: dl_adc_ch1, byte: 2,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
-        - {name: dl_adc_ch2, byte: 4,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
-        - {name: dl_adc_ch3, byte: 6,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
-        - {name: dl_adc_ch4, byte: 8,  size: 16, endian: big, scale: 7.8125e-5, unit: V}
-        - {name: dl_adc_ch5, byte: 10, size: 16, endian: big, scale: 7.8125e-5, unit: V}
-        - {name: dl_adc_ch6, byte: 12, size: 16, endian: big, scale: 7.8125e-5, unit: V}
-        - {name: dl_adc_ch7, byte: 14, size: 16, endian: big, scale: 7.8125e-5, unit: V}

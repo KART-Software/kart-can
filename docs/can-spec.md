@@ -1,276 +1,112 @@
 # カート CAN 通信仕様
 
-`data-logger` / `drive-controller` / `kart-machine-manager` の 3 リポジトリのソースコードから抽出・統合した、カート車載 CAN ネットワークの仕様書。
-すべて実装（as-implemented）ベース。ドキュメント記載値ではなくコードの実値を採用し、矛盾点は「[注意点](#7-不整合注意点action-items)」に列挙した。
+`can.yaml` が定義の正。本書はネットワーク全体の構成・各メッセージの意味・移行状態・未決事項をまとめた読み物。
+信号レイアウト (byte/size/endian/scale) は `can.yaml` と生成物 `generated/kart.dbc` を参照すること。
 
-> 生成日: 2026-07-06 / 出典: 各リポジトリのソース（引用は `file:line`）
+> 更新: 2026-10-05。旧版 (2026-07-06、ESP32 版 data-logger と 0x200/0x300/0x400 指令を前提とした実装調査) は git 履歴参照。
 
 ---
 
-## 1. 概要（ネットワーク構成）
+## 1. ネットワーク構成
 
 ```
-                    ┌─────────────────────────────┐
-                    │       CAN バス (1 Mbps)       │
-                    │   Classic CAN 2.0 / 11bit ID  │
-                    └─────────────────────────────┘
-   0x200/0x300/0x400 │        │0x5F0-0x5F4   │0x600-0x603   │0x700-0x70E
-   （制御指令）        ▼        ▼              ▲              ▲
-  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-  │ IST/コックピット │→│drive-controller│  │  MoTeC ECU    │  │ data-logger  │
-  │ (上位ECU・外部)  │  │  (Teensy4.1)  │  │  (外部・エンジン)│  │ (ESP32-S3)   │
-  └──────────────┘  │ 駆動系ECU      │  └──────────────┘  │ センサ送信専用 │
-                    │ TX:0x600-603   │        │              └──────────────┘
-                    │ RX:0x200/300/400│       │0x5F0-0x5F4          │0x700-0x70E
-                    └──────────────┘        ▼                     ▼
-                                      ┌──────────────────────────────────┐
-                                      │       kart-machine-manager         │
-                                      │       (Raspberry Pi / インパネ)      │
-                                      │  RX 監視 + CAN→UDP ゲートウェイ       │
-                                      │  実バスへは送信しない（DEBUG時のみ模擬）│
-                                      └──────────────────────────────────┘
+ 車両前方                                                      車両後方
+ ┌──────────────────────────────────────────┐
+ │ kart-machine-manager (kmm, DEBIX Infinity) │
+ │  ┌─────────────┐   rpmsg    ┌───────────┐ │
+ │  │ A コア Linux │◀──────────│ M コア    │ │   ┌──────────────────┐   ┌──────────────┐
+ │  │ 表示/ログ/   │ (全受信)   │ data_logger│ │   │ drive_controller │   │  motec_ecu   │
+ │  │ クラウド     │           │ ADC/GPIO/ │ │   │  Teensy 4.1      │   │  MoTeC M800  │
+ │  └─────────────┘           │ CAN ctrl  │ │   │  APPS/TPS 直結   │   └──────┬───────┘
+ │   GPS (UART 直結)           └─────┬─────┘ │   └────────┬─────────┘          │
+ └──────────────────────────────────┼───────┘            │                    │
+                                     │                    │                    │
+ ════════════════════════════════════╧════════════════════╧════════════════════╧════ CAN 1 Mbps
+        TX 0x700-0x701 (ADC)              TX 0x600-0x60A (IMU/後方センサー/状態)   TX 0x5F0-0x5F4
+        TX 0x740 Control, 0x741 Shift ─▶ RX 0x740/0x741, RX 0x5F1 (Vbat) ◀──────────┘
 ```
 
-- **物理層は 3 ノードとも 1 Mbps・Classic CAN 2.0・標準 11bit ID で一致**（唯一 Arduino モックのみ 500 kbps → [注意点](#7-不整合注意点action-items)）。
-- CAN FD・拡張 29bit ID は**どのノードでも未使用**。
-- リポジトリに `.dbc` 等の共通 CAN データベースは**存在しない**（`kart-machine-manager` にある `dl1.dbc` は未使用の参照資料）。ID・レイアウトはすべてソース内の定数／構造体で管理。
+- 物理層: **1 Mbps、Classic CAN 2.0、標準 11bit ID**。CAN FD・29bit ID は未使用。
+- CAN はデータ取得だけでなく、**リアルタイムの制御信号 (コックピットスイッチ) の伝送にも使う**。
+- APPS と TPS は drive_controller にアナログ直結。ETC の制御入力は CAN に依存しない (CAN には物理値と生値をログ用に流す)。
+- Shutdown Circuit (BOTS / BSPD / マスタースイッチ / 燃料・点火・ETC の電源遮断) は規則上ハードワイヤ必須で CAN には載せない (kart-soft-docs「規則上の制約」参照)。
 
----
+## 2. ノード
 
-## 2. バス設定
-
-| 項目 | data-logger | drive-controller | kart-machine-manager | 備考 |
-|---|---|---|---|---|
-| MCU / コントローラ | ESP32-S3 内蔵 **TWAI** | Teensy 4.1 (i.MX RT1062) **FlexCAN_T4 / CAN3** | Raspberry Pi + `python-can` | |
-| プロトコル | Classic CAN 2.0 | Classic CAN 2.0 | Classic CAN 2.0 | FD 不使用 |
-| ビットレート | **1 Mbps** | **1 Mbps** | (未指定・OSで設定) | 実バス = 1 Mbps |
-| ID 形式 | 標準 11bit | 標準 11bit | 標準 11bit (`is_extended_id=False`) | |
-| インタフェース | TWAI NORMAL | FlexCAN CAN3 | socketcan `can0`（本番）/ virtual `debug`（DEBUG） | |
-| 物理ピン | TX=GPIO35 / RX=GPIO36 | CAN3 = pin 30/31 | (SBC のCANインタフェース) | |
-| フィルタ | 全受け入れ(実質送信専用) | ハード無し・ソフトでID判定 | listener でID判定 | |
-| 送信バッファ | tx_queue 15 | TX_SIZE_16 / RX_SIZE_256 (FIFO) | — | |
-| 送信方式 | **単発・再送なし** (`ss=1`, timeout 0) | 通常送信 | 本番は送信なし | data-logger は取りこぼし得る |
-
-引用: data-logger `src/can/can.hpp:18`, `src/can/can.cpp:5-31`, `src/config.hpp:32-33` / drive-controller `src/constants.hpp:165`, `src/can/can_bus.hpp:19`, `can_bus.cpp:6` / kart-machine-manager `app/src/can/can_master.py:15-25`。
-
-> **サンプルポイント** は各ドライバのデフォルト（ESP-IDF `TWAI_TIMING_CONFIG_1MBITS()` ≒80% / FlexCAN 内部既定）で、コード内に明示設定なし。
-
----
-
-## 3. ノードと役割
-
-| ノード | 役割 | 送信 (TX) | 受信 (RX) |
+| ノード名 (`can.yaml`) | 実体 | CAN コントローラ | 役割 |
 |---|---|---|---|
-| **drive-controller** (Teensy 4.1) | 駆動系 ECU。電子スロットル(ETC)・オートシフタ・ローンチ制御 | `0x600`–`0x603`（IMU姿勢+ギア, 16ms周期） | `0x200`/`0x300`/`0x400`（モード/ローンチ/オートシフト指令） |
-| **data-logger** (ESP32-S3) | センサ送信専用（BMI160 IMU + ADS8688 ADC + u-blox GNSS）。**受信経路なし** | `0x700`–`0x70E`（120Bバッファを15分割, ~30Hz） | なし |
-| **kart-machine-manager** (Raspberry Pi) | インパネ表示 + **CAN→UDP ゲートウェイ**（受信フレームをクラウド転送）。**実バスへは送信しない** | なし（DEBUG時のみ ECU を模擬送信） | `0x5F0`–`0x5F4`（表示用にデコード）, `0x700`–`0x70E`（生のままUDP転送） |
-| **MoTeC ECU** (外部・本リポジトリ外) | エンジン ECU | `0x5F0`–`0x5F4`（エンジンデータ） | — |
-| **IST/コックピット** (外部・上位ECU) | ドライバ操作の指令元 | `0x200`/`0x300`/`0x400` | — |
+| `data_logger` | kmm M コア (i.MX8MM Cortex-M4 / 8MP M7, data-logger-zephyr `apps/can-gw`) | MCP2518FD (キャリアボード) / MCP2515 (現 HAT) | ADS8688 ADC 8ch (前方センサー) とコックピットスイッチ (GPIO) を送信。CAN 受信全量を rpmsg で Linux へ転送 |
+| `kart_machine_manager` | kmm A コア (Linux, kart-machine-manager アプリ) | なし (rpmsg 経由の CAN netdev) | インパネ表示・ログ・クラウド送信。実バスへ送信しない |
+| `drive_controller` | Teensy 4.1 (車両後方) | FlexCAN_T4 CAN3 | ETC / クラッチ / シフト / セルモーターリレー / ブレーキランプ制御。APPS/TPS 直結。IMU・後方センサー・車輪速・自身の状態を送信。0x740 と 0x5F1 を受信 |
+| `motec_ecu` (外部) | MoTeC M800 | — | エンジンデータ送信 |
 
-- `drive-controller` の launch control は通常ビルドでは**無効**（`-DLAUNCH_CONTROL_ENABLED` 未定義）。`0x300` は受信・解釈されるが FSM は動かない (`main.cpp:202-212`)。
+## 3. メッセージ一覧
 
----
-
-## 4. メッセージ ID マップ（ネットワーク全体）
-
-| ID | 名称 | 送信元 → 受信先 | DLC | 形式 | 周期 |
+| ID | 名称 | 送信 → 受信 | DLC | 周期 | 内容 |
 |---|---|---|---|---|---|
-| `0x200` | MODE_SELECT（ETCモード指令） | IST/上位ECU → drive-controller | ≥1 (byte0) | 11bit | ハートビート (≤200ms) |
-| `0x300` | LAUNCH_CTRL（ローンチON/OFF） | IST/上位ECU → drive-controller | ≥1 (byte0) | 11bit | ハートビート (≤200ms) |
-| `0x400` | AUTO_SHIFT（オートシフトON/OFF） | IST/上位ECU → drive-controller | ≥1 (byte0) | 11bit | ハートビート (≤200ms) |
-| `0x5F0` | エンジン1（RPM/スロットル/水温/油温） | MoTeC ECU → kart-machine-manager | 8 | 11bit | 実機不明（模擬 33ms） |
-| `0x5F1` | エンジン2（油圧/ギア電圧/バッテリ/λ） | MoTeC ECU → kart-machine-manager | 8 | 11bit | 同上 |
-| `0x5F2` | エンジン3（吸気圧/燃圧/ブレーキ圧） | MoTeC ECU → kart-machine-manager | 8 | 11bit | 同上 |
-| `0x5F3` | ステータス（ファン/ISTシフト/入出力RPM） | MoTeC ECU → kart-machine-manager | 8 | 11bit | 同上 |
-| `0x5F4` | 追加温度（油温2/油温3/クーラント温） | MoTeC ECU → kart-machine-manager | **6** | 11bit | 同上（表示デコードなし・UDP転送のみ） |
-| `0x600` | GYRO_XY（ジャイロX,Y） | drive-controller → *(消費者不明)* | 8 | 11bit | 16ms (~62.5Hz) |
-| `0x601` | GYRO_Z_GEAR（ジャイロZ+ギア） | drive-controller → *(消費者不明)* | **5** | 11bit | 16ms |
-| `0x602` | ACCEL_XY（加速度X,Y） | drive-controller → *(消費者不明)* | 8 | 11bit | 16ms |
-| `0x603` | ACCEL_Z（加速度Z） | drive-controller → *(消費者不明)* | **4** | 11bit | 16ms |
-| `0x700`–`0x70E` | data-logger センサバースト（15フレーム） | data-logger → kart-machine-manager | 8 | 11bit | ~30Hz バースト（フレーム間 ~1ms） |
+| 0x5F0 | MoTeC_Engine1 | motec → kmm | 8 | MoTeC 設定 | rpm / スロットル / 水温 / 油温 |
+| 0x5F1 | MoTeC_Engine2 | motec → kmm, dc | 8 | 〃 | 油圧 / ギア電圧 / バッテリ電圧 (dc は Vbat として使用) / λ |
+| 0x5F2 | MoTeC_Engine3 | motec → kmm | 8 | 〃 | 吸気圧 / 燃圧 / 前後ブレーキ圧 |
+| 0x5F3 | MoTeC_Status | motec → kmm | 8 | 〃 | ファン / IST シフト状態 / 入出力 RPM |
+| 0x5F4 | MoTeC_Temps2 | motec → kmm | 6 | 〃 | 油温 2/3 / クーラント温 |
+| 0x600 | DC_GyroXY | dc → kmm | 8 | 16 ms | ジャイロ X/Y (f32 LE, dps) |
+| 0x601 | DC_GyroZGear | dc → kmm | 5 | 16 ms | ジャイロ Z + ギア |
+| 0x602 | DC_AccelXY | dc → kmm | 8 | 16 ms | 加速度 X/Y (f32 LE, 単位要確認) |
+| 0x603 | DC_AccelZ | dc → kmm | 4 | 16 ms | 加速度 Z |
+| 0x604 | DC_Pedals | dc → kmm | 8 | 20 ms | 採用 APPS / TPS / クラッチ (0.01 %)、後ろブレーキ圧 (0.1 psi) |
+| 0x605 | DC_EtcRaw | dc → kmm | 8 | 20 ms | APPS 1/2、TPS 1/2 の生値 (ADS8688 カウント, V) |
+| 0x606 | DC_StrokeRear | dc → kmm | 4 | 20 ms | 後ろ左右ストローク (0.01 V) |
+| 0x607 | DC_WheelSpeed | dc → kmm | 8 | 20 ms | 車輪速 4 輪 (0.01 km/h) |
+| 0x608 | DC_WheelPulse | dc → kmm | 8 | 20 ms | 車輪速パルスの生カウント 4 輪 (累積 uint16) |
+| 0x609 | DC_Engine | dc → kmm | 4 | 20 ms | エンジン回転数 / クラッチ後回転数 |
+| 0x60A | DC_Status | dc → kmm | 5 | 33 ms | 適用中の ETC モード / launch / auto-shift、セルリレー、Shutdown ループ状態 |
+| 0x700–0x701 | DL_700 / DL_701 | data_logger → kmm | 8 | 33 ms | ADS8688 ch0–3 / ch4–7 (u16 BE 生カウント, V = raw × 7.8125e-5) |
+| 0x740 | Control | data_logger → dc, kmm | 4 | 33 ms | コックピットスイッチ: ETC モード / launch / auto-shift / セル |
+| 0x741 | Shift | data_logger → dc, kmm | 2 | 10 ms | シフトパドル上下の押下状態 |
 
-> `0x600`–`0x603` は本 3 リポジトリ内に受信側がいない。詳細は[注意点](#7-不整合注意点action-items) を参照。
+## 4. 制御信号の意味とフェイルセーフ
 
----
+### 4.1 Control (0x740) と Shift (0x741)
 
-## 5. メッセージ詳細（信号レイアウト）
+- Control の byte0–2 (`etc_mode` / `launch_active` / `auto_shift`) は旧 DLC 3 フレームと互換。drive-controller の受信コード (`can_data.cpp`, `CONTROL_INPUT_VIA_CAN`) はこの 3 バイトを解釈する。byte3 は `starter` (押下中 1)。
+- Control は即時性を求めないので 33 ms 周期。Shift はパドル操作の遅延を抑えるため 10 ms 周期で分離した。どちらも状態 (押下中 1) を周期送信する。イベント送信やバーストはしない (遅延は最大 1 周期、取りこぼしは次の周期で回復)。
+- 送信側 (M コア) はパドル入力を 10 ms より十分速く走査しデバウンスする。押下が 1 周期より短いと欠落するので、押下状態は最低 1 周期は保持して送る。
+- 受信側 (drive_controller) は `shift_up` / `shift_down` の 0→1 の立ち上がりを 1 回のシフト要求とみなす。保持中の 1 は無視する。
+- フェイルセーフ (drive_controller): Control **200 ms 途絶**で `etc_mode → NORMAL` (ただし `MOTOR_OFF` はラッチ、CAN 断で勝手に復帰させない)、`launch → inactive`、`auto_shift → manual`、`starter → 0`。Shift は **100 ms 途絶**で両パドル 0 扱い。
+- `etc_mode = 0` (未指定) や未知値はモード変更なし (現在値維持)。
+- `starter` 押下中は drive_controller がセルモーターリレーを駆動する。
+- バス負荷の目安: Shift 10 ms で約 1%、Control 33 ms で約 0.3%。drive_controller の 0x604–0x60A と IMU、0x700 系を足しても 10% 以下。
+- CAN コントローラは通常モード (ACK 無しで自動再送) で使う。単発送信モード (旧 ESP32 版の TWAI `ss=1`) は制御フレームには使わない。
 
-### 5.1 制御指令: `0x200` / `0x300` / `0x400`（→ drive-controller）
+### 4.2 APPS / TPS (アナログ直結)
 
-いずれも **byte0 のみ使用**（`len>=1` が条件）。上位 ECU からの周期ハートビートとして扱われ、**200ms 途絶でフェイルセーフ**が働く。
-引用: `drive-controller/dc-firmware/src/can/can_data.cpp:34-75`, `src/constants.hpp:171-180`。
+- APPS 2 系統と TPS 2 系統は drive_controller の ADS8688 に直結 (`constants.hpp` の `APPS_1_CH` / `APPS_2_CH` / `TPS_1_CH` / `TPS_2_CH`)。規則上は FSAE Rules 2027 T.4.2.8 / IC.4.4.7 の「アナログ信号で直接コントローラへ」に該当し、デジタル送信時に必要な故障モードの説明 (T.4.2.11 / IC.4.4.9) は不要。
+- プラウジビリティ判定 (2 系統の 10% 乖離 100 ms、範囲外) は drive_controller 内で行う。
+- CAN には採用値 (0x604) と生値 (0x605) をログ・検証用に流す。これらを ETC 制御に使う受信者はいない。
 
-| ID | byte0 の意味 | フェイルセーフ (200ms途絶時) |
+### 4.3 Vbat
+
+drive_controller は MoTeC 0x5F1 の `battery_voltage` (0.01 V) を受信して ETC 制御の電源電圧として使う。
+
+## 5. 移行状態 (2026-10 時点の実装)
+
+| 項目 | 現状 | 目標 |
 |---|---|---|
-| `0x200` MODE_SELECT | ETC モード enum `CanEtcMode`: `1`=CALIB, `2`=NORMAL, `3`=RESTRICTED, `4`=MOTOR_OFF。`0`(未指定)/不明値は無視（現モード維持） | NORMAL へ復帰。ただし **MOTOR_OFF はラッチ**（CAN喪失でも解除しない） |
-| `0x300` LAUNCH_CTRL | `0x01`=launch active、その他=false | `launchActive=false` |
-| `0x400` AUTO_SHIFT | `0x01`=オート(ON)、その他=マニュアル(OFF) | `autoShiftActive=false`（マニュアル） |
+| コックピットスイッチ | drive-controller の GPIO に直結 (`MODE_SELECT_SW_PIN_*`, `AUTO_SHIFT_SW_PIN`, パドル `AUTO_SHIFT_UP/DOWN_IN_PIN`)。drive-controller が自分の状態を 0x740 (DLC 3) で送信 (`can_controller.cpp`) | kmm M コアの GPIO → 0x740 (DLC 4) と 0x741 を送信。drive-controller は `CONTROL_INPUT_VIA_CAN` を有効化して受信側へ。drive-controller の 0x740 送信は止め、状態は 0x60A へ |
+| APPS / TPS | drive-controller の ADS8688 に直結 | 同左 (0x604 / 0x605 の送信を追加) |
+| 前方 ADC (0x700/0x701) | M4 (`apps/can-gw`) が 30 Hz で送信済み | 同左。ch 割り当ては未定のまま信号名は固定しない |
+| IMU (0x600–0x603) | drive-controller が IAM-20680HP で送信 | 同左 (加速度の単位確定) |
+| 後方センサー・車輪速 (0x606–0x609) | 未送信 (drive-controller 内部で使用のみ) | 送信 |
+| DC_Status (0x60A) | 未送信 (状態は 0x740 で送っている) | 0x740 が M コア送信に移った後、状態はこちらへ |
+| Vbat | 未受信 (ログの vbat は 0) | 0x5F1 `battery_voltage` を受信 |
+| kmm A コアの受信 | Python で 0x5F0–0x5F4 を手書きデコード、0x700 系は生のまま転送。kart.dbc 未使用 | kart.dbc を cantools でロード |
 
-- `CanEtcMode` は proto の `dc.EtcMode`（UNSPECIFIED=0, CALIB=1, NORMAL=2, RESTRICT=3, MOTOR_OFF=4, `spec/proto/drive_controller.proto:12-18`）と数値一致（C++ は `RESTRICTED`、proto は `RESTRICT` と綴り差）。
-- RX 側は DLC を byte0 以外検証しないため、送信側 DLC は ≥1 なら自由。
+切替の際の注意: Control の定義は DLC 4 に拡張したが、現行 drive-controller (submodule 1a01108) は DLC 3 で送信している。新ヘッダで `msg.len >= KART_CAN_CONTROL_LENGTH` を判定する受信側は 3 バイトフレームを無視する。同じ ID を 2 ノードが送るとバス上で衝突するため、M コア側の送信開始と drive-controller の送信停止・受信側切替は同時に行うこと。
 
-### 5.2 MoTeC エンジンデータ: `0x5F0`–`0x5F4`（MoTeC → kart-machine-manager）
+## 6. 未決・要確認
 
-**ビッグエンディアン、各信号 uint16（2バイト）**。送信側は `int(値×係数) & 0xFFFF` を BE で格納、受信側は係数で除算して物理値化。
-引用（エンコード=模擬送信 / デコード=表示）: `kart-machine-manager/app/src/can/mock_can_sender.py:42-84` / `app/src/can/can_listeners.py:34-66`。
-
-**`0x5F0`（DLC 8）**
-| byte | 信号 | 型 | 係数 | 単位 |
-|---|---|---|---|---|
-| 0–1 | rpm | u16 BE | ×1 | rpm |
-| 2–3 | throttlePosition | u16 BE | ÷10 | % |
-| 4–5 | waterTemp | u16 BE | ÷10 | °C |
-| 6–7 | oilTemp | u16 BE | ÷10 | °C |
-
-**`0x5F1`（DLC 8）**
-| byte | 信号 | 係数 | 単位 |
-|---|---|---|---|
-| 0–1 | oilPress | ÷10 | (圧力) |
-| 2–3 | gearVoltage | ÷1000 | V |
-| 4–5 | batteryVoltage | ÷100 | V |
-| 6–7 | lambda | ÷1000（模擬のみ・表示側は未デコード） | λ |
-
-**`0x5F2`（DLC 8）**
-| byte | 信号 | 係数 | 単位 |
-|---|---|---|---|
-| 0–1 | manifoldPressure | ÷10（模擬のみ・表示側未デコード） | kPa |
-| 2–3 | fuelPress | ÷10 | (圧力) |
-| 4–5 | brakePress front | ÷10 | (圧力) |
-| 6–7 | brakePress rear | ÷10 | (圧力) |
-
-**`0x5F3`（DLC 8）**
-| byte | 信号 | 内容 |
-|---|---|---|
-| 0–1 | fanEnabled | ON時 `\x00\x01` / OFF時 `\x00\x00`（表示側は `data[1]` を bool 化） |
-| 2–3 | IST シフト状態 enum | `(istUp,istDown)`: 0=(F,F), 1=(F,T), 2=(T,F), 3=(T,T)（表示側未デコード） |
-| 4–5 | inputRpm | u16 BE ×1（表示側未デコード） |
-| 6–7 | outputRpm | u16 BE ×1（表示側未デコード） |
-
-**`0x5F4`（DLC 6）** — 表示デコードなし・UDP 転送のみ
-| byte | 信号 | 係数 | 単位 |
-|---|---|---|---|
-| 0–1 | oilTemperature2 | ÷10 | °C |
-| 2–3 | oilTemperature3 | ÷10 | °C |
-| 4–5 | coolantTemperature | ÷10 | °C |
-
-> 表示側の温度デコードは整数切り捨て `//10`、スロットル等は浮動小数 `/10`（実装差, `can_listeners.py:41,44`）。
-
-### 5.3 drive-controller 姿勢テレメトリ: `0x600`–`0x603`
-
-**すべて float32・リトルエンディアン**（Cortex-M7 上の `memcpy`、スケーリングなしで物理値を直接格納）。
-引用: `drive-controller/dc-firmware/src/can/can_data.cpp:5-32`, `src/constants.hpp:167-170`。
-
-| ID | DLC | byte 0–3 | byte 4– |
-|---|---|---|---|
-| `0x600` GYRO_XY | 8 | gyro_x (f32 LE, dps) | gyro_y (f32 LE, dps) @4 |
-| `0x601` GYRO_Z_GEAR | 5 | gyro_z (f32 LE, dps) | gear (uint8) @4 |
-| `0x602` ACCEL_XY | 8 | accel_x (f32 LE) | accel_y (f32 LE) @4 |
-| `0x603` ACCEL_Z | 4 | accel_z (f32 LE) | — |
-
-- **ジャイロ単位 = dps**（IAM20680 ±2000dps, `1/16.4 dps/LSB`, `iam20680hp.cpp:53,78`）。
-- **加速度単位は要確認**: ヘッダコメント (`can_data.hpp:9`) は m/s² だが、実データはドライバ由来で **mg（ミリG, `1000/2048 mg/LSB`）**。変換コードは存在しない → [注意点](#7-不整合注意点action-items)。
-- **gear** (`0x601` byte4): `-1`=不明→`0xFF` 送信、`0`=ニュートラル、`1`–`6`=ギア段。
-- DLC 未満のバイトは 0 埋め（バッファを `{}` でクリア）。
-
-### 5.4 data-logger センサバースト: `0x700`–`0x70E`
-
-**セマンティックな per-ID 意味はない**。120 バイトの平坦バッファを 8 バイト毎に分割し `0x700 + i`（i=0..14）で連番送信するだけ。受信側は **ID 順に 15 フレームを連結してから** 120 バイト構造を解釈する必要がある（シーケンス番号・タイムスタンプ・CRC なし）。
-引用: `data-logger/src/can/can_master.cpp:14-26`, `src/can/can_master.hpp:9-16`。
-
-**⚠ バッファ内でエンディアン混在**: BMI160/ADS8688 は**ビッグエンディアン**、GPS ブロックは u-blox 由来の**リトルエンディアン**。
-
-#### 120 バイトバッファ構造
-
-**bytes 0–11: BMI160 IMU**（int16, ビッグエンディアン, 生カウント）
-| byte | 信号 | 備考 |
-|---|---|---|
-| 0–1 | accel.x | ±2g, ≒16384 LSB/g |
-| 2–3 | accel.y | |
-| 4–5 | accel.z | |
-| 6–7 | gyro.x | ±250dps, ≒131.2 LSB/(°/s) |
-| 8–9 | gyro.y **であるべき（実際は gyro.x を重複送信＝バグ）** | 🐛 `bmi160.cpp:70-73` |
-| 10–11 | gyro.z **であるべき（実際は gyro.x を重複送信＝バグ）** | 🐛 gyro.y/z は送信されない |
-
-**bytes 12–27: ADS8688 ADC**（uint16, ビッグエンディアン, 生カウント）
-| byte | 信号 |
-|---|---|
-| 12–13 … 26–27 | ADC ch0 … ch7（2バイト×8ch） |
-
-- レンジ RANGE_4 = 0–1.25×VREF（VREF=4.096V）→ **0–5.12V**。電圧換算 `V = raw × 7.8125e-5`（=5.12/65536 V/LSB, `ads8688.cpp:67`）。ファームは生カウント送信。
-
-**bytes 28–119: u-blox UBX-NAV-PVT（92 バイト, リトルエンディアン）**
-UBX ヘッダ6バイトを除いたペイロードをそのまま格納（NEO-M8U, 20Hz）。バッファ byte = `28 + UBXペイロードオフセット`。主要フィールド:
-
-| UBX off | buffer byte | フィールド | 型 | スケール/単位 |
-|---|---|---|---|---|
-| 0 | 28–31 | iTOW | U4 | ms |
-| 4 | 32–37 | year/month/day/hour/min | — | UTC |
-| 10 | 38 | sec | U1 | s |
-| 11 | 39 | valid | X1 | bitfield |
-| 20 | 48 | fixType | U1 | 0=no fix,2=2D,3=3D,4=GNSS+DR,5=time |
-| 21 | 49 | flags | X1 | b0 gnssFixOK 他 |
-| 23 | 51 | numSV | U1 | 使用衛星数 |
-| 24 | 52–55 | lon | I4 | 1e-7 deg |
-| 28 | 56–59 | lat | I4 | 1e-7 deg |
-| 32 | 60–63 | height | I4 | mm（楕円体高） |
-| 36 | 64–67 | hMSL | I4 | mm（海抜） |
-| 40 | 68–71 | hAcc | U4 | mm |
-| 44 | 72–75 | vAcc | U4 | mm |
-| 48 | 76–79 | velN | I4 | mm/s（北） |
-| 52 | 80–83 | velE | I4 | mm/s（東） |
-| 56 | 84–87 | velD | I4 | mm/s（下） |
-| 60 | 88–91 | gSpeed | I4 | mm/s（対地速度） |
-| 64 | 92–95 | headMot | I4 | 1e-5 deg |
-| 68 | 96–99 | sAcc | U4 | mm/s |
-| 72 | 100–103 | headAcc | U4 | 1e-5 deg |
-| 76 | 104–105 | pDOP | U2 | 0.01 |
-| 78 | 106 | flags3 (invalidLlh 他) | X1 | `getInvalidLlh()` 参照 |
-| 84 | 112–115 | headVeh | I4 | 1e-5 deg |
-| 88 | 116–117 | magDec | I2 | 0.01 deg |
-| 90 | 118–119 | magAcc | U2 | 0.01 deg |
-
-> GPS 各フィールドのオフセットは標準 u-blox M8 UBX-NAV-PVT 仕様に基づく（SparkFun ライブラリのサブモジュールが未初期化のため構造体を直接読めず、`GPS_DATA_LENGTH=92` と `printPvtData()` の参照フィールドで裏取り済み）。
-
----
-
-## 6. モック（kart-machine-manager によるバス模擬）
-
-`kart-machine-manager` は実バスへ送信しないが、開発用に **MoTeC ECU（`0x5F0`–`0x5F4`）を模擬送信**する 3 種のモックを持つ。**data-logger 系（`0x700`–`0x70E`）や drive-controller 系（`0x600`–`0x603`）は模擬しない**（＝DEBUG 時 UDP ペイロードでは 0 のまま）。
-
-| モック | 実装 | インタフェース | ビットレート | 生成 ID | 周期 |
-|---|---|---|---|---|---|
-| in-process | `mock_can_sender.py` | virtual `debug` | (メモリ内) | `0x5F0`–`0x5F4` | 33ms |
-| can-mock-py | `can-mock-py/` | slcan（CANable 等 `/dev/ttyACM0`） | **1 Mbps** 既定 | `0x5F0`–`0x5F4` | 33ms |
-| can-mock (Arduino) | `can-mock/` | UNO + MCP2515 | **500 kbps** ⚠ | `0x5F0`,`0x5F1`,`0x5F2` のみ（`0x5F2`は DLC4） | 30ms |
-
----
-
-## 7. 不整合・注意点（Action Items）
-
-コード横断で見つかった、仕様確定・修正の判断が要る箇所。
-
-1. **`0x600`–`0x603`（drive-controller の IMU/ギア）の受信側が本 3 リポジトリに存在しない。** `kart-machine-manager` が listen するのは `0x5F0`–`0x5F4` と `0x700`–`0x70E` のみで、`0x600` 系は含まれない (`can_listeners.py:74-98`)。実際に誰が消費するのか（別 ECU／将来用）要確認。
-2. **ID 範囲の重複懸念。** drive-controller は `0x600`–`0x603`（標準11bit）を送信する一方、`kart-machine-manager` の参照 DBC `dl1.dbc` は `0x600`–`0x60F`（**29bit 拡張**）を定義。フレーム形式が違うため物理衝突はしないが、番号帯が重なる。`dl1.dbc` はコード未使用の参照資料 → 本仕様の正とはしない。
-3. **ビットレート不一致。** 実ノード（data-logger / drive-controller）と can-mock-py は 1 Mbps だが、**Arduino モックのみ 500 kbps**。本番 socketcan は OS 側設定でコードに明記なし。実バス = **1 Mbps** で統一すべき（Arduino モックは実バス接続時に要変更）。
-4. **加速度単位の食い違い（drive-controller `0x602`/`0x603`）。** ヘッダコメントは m/s² だが実データは **mg**。受信側デコーダと単位を突き合わせて確定要。
-5. **BMI160 ジャイロ Y/Z が送信されていない（data-logger バグ）。** `0x700` 系 buffer byte 8–11 が gyro.x の重複。`bmi160.cpp:70-73` を `gyro.y`/`gyro.z` に修正要。
-6. **data-logger フレームはトランスポート分割のみ**でセマンティクスなし・シーケンス/タイムスタンプ/CRC なし・単発送信で再送なし。取りこぼし時の欠落・部分更新に注意。受信側は 15 フレーム全て揃えてから解釈が必要。
-7. **`0x5F0`–`0x5F4` の一部フィールドが表示側で未デコード**（lambda, manifoldPressure, IST シフト状態, input/output RPM）。UDP へは転送されるが GUI には出ない。
-8. **`0x5F4` と `0x700`–`0x70E` は生のまま UDP 転送のみ**で CAN 上の意味付けデコードがない。data-logger の 120 バイト構造は `kart-machine-manager` 側では解釈されていない。
-9. **実機 MoTeC の送信周期は本リポジトリ内に定義なし**（模擬は 33ms）。実 ECU 設定と要突き合わせ。
-10. **AGENTS.md 記載が古い**: `CanMaster.__init__` が `sudo` で socketcan を立ち上げるとあるが、実コードは `can0` を開くだけ（ブリングアップは外部）。
-
----
-
-## 付録: 主要な定義箇所（引用）
-
-| 定義 | ファイル |
-|---|---|
-| CAN ID / ビットレート / タイムアウト定数 | `drive-controller/dc-firmware/src/constants.hpp:161-180` |
-| drive-controller TX パック / RX パース | `drive-controller/dc-firmware/src/can/can_data.cpp` |
-| ETC モード enum (CAN) | `drive-controller/dc-firmware/src/can/can_data.hpp:20-25` |
-| data-logger バースト送信 / バッファ分割 | `data-logger/src/can/can_master.cpp` , `can_master.hpp` |
-| data-logger TWAI 設定 | `data-logger/src/can/can.hpp` , `can.cpp` |
-| MoTeC デコード（表示） | `kart-machine-manager/app/src/can/can_listeners.py:34-66` |
-| MoTeC エンコード（模擬） | `kart-machine-manager/app/src/can/mock_can_sender.py:42-84` |
-| ID→長さマップ / UDP ペイロード | `kart-machine-manager/app/src/can/can_listeners.py:74-134` |
+1. **加速度の単位 (0x602/0x603)**。旧実装はヘッダ m/s²・実データ mg。IAM-20680HP 実装で確定。
+2. **MoTeC の送信周期**。本リポジトリ内に定義なし (kmm のモックは 33 ms)。実 ECU 設定と突き合わせ。drive_controller が Vbat に使うので、0x5F1 の周期と途絶時の扱いを決める。
+3. **Shift の送信周期 (10 ms)**。パドルの最短押下時間と M コアの走査周期・デバウンス時間の関係を実機で確認し、必要なら周期を詰める。
+4. **0x700/0x701 のチャンネル割り当て**。前方センサー 3 種 (左右ストローク、舵角、前ブレーキ圧) の配線が決まるまで ch 番号のまま。
+5. **kmm A コアの kart.dbc 移行**。手書きデコード (`can_listeners.py`) を cantools に置き換える。
